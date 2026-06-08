@@ -1,0 +1,6 @@
+{
+  "name": "ClapEarn",
+  "description": "An exact clone of ClipClaps with rewarding video playback, raffle cards, game feeds, and progress tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
