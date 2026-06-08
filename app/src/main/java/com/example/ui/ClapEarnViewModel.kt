@@ -223,6 +223,46 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun uploadVideo(title: String, creator: String, videoUrl: String, thumbnailUrl: String) {
+        val newVideo = com.example.ui.models.VideoItem(
+            id = "vid_${System.currentTimeMillis()}",
+            title = title,
+            creator = creator.ifEmpty { "You" },
+            thumbnailUrl = thumbnailUrl.ifEmpty { "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500&auto=format&fit=crop&q=60" },
+            durationString = "0:15",
+            clapsCount = 0,
+            viewsCount = "1",
+            authorAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=60",
+            videoUrl = videoUrl
+        )
+        viewModelScope.launch {
+            _videos.value = listOf(newVideo) + _videos.value
+            
+            if (repository.isFirebaseAvailable) {
+                val db = repository.getFirebaseFirestore()
+                if (db != null) {
+                    val data = mapOf(
+                        "id" to newVideo.id,
+                        "title" to newVideo.title,
+                        "creator" to newVideo.creator,
+                        "thumbnailUrl" to newVideo.thumbnailUrl,
+                        "durationString" to newVideo.durationString,
+                        "clapsCount" to newVideo.clapsCount,
+                        "viewsCount" to newVideo.viewsCount,
+                        "authorAvatar" to newVideo.authorAvatar,
+                        "isLiked" to newVideo.isLiked,
+                        "videoUrl" to newVideo.videoUrl
+                    )
+                    try {
+                        db.collection("videos").document(newVideo.id).set(data)
+                    } catch (e: Exception) {
+                        Log.e("ClapEarnViewModel", "Failed to upload video to Firebase: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
     // Video play/pause and progress monitoring
     fun toggleVideoPlay() {
         if (_isVideoPlaying.value) {
