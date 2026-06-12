@@ -27,6 +27,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -59,6 +60,16 @@ fun VideosScreen(
     val completedPopup by viewModel.completedRewardPopup.collectAsState()
     val pendingChestType by viewModel.pendingChestType.collectAsState()
     val pendingChestTimeLeft by viewModel.pendingChestTimeLeft.collectAsState()
+
+    val context = LocalContext.current
+    val rewardViewModel: com.example.ui.VideoRewardViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        factory = com.example.ui.VideoRewardViewModelFactory(context.applicationContext as android.app.Application)
+    )
+
+    // Sync screen playing state with reward timeline timer
+    LaunchedEffect(isPlaying) {
+        rewardViewModel.setVideoPlaying(isPlaying)
+    }
 
     var showUploadDialog by remember { mutableStateOf(false) }
 
@@ -140,7 +151,8 @@ fun VideosScreen(
                         onMenuClick = {
                             selectedVideoForMenu = video
                             showMenuSheet = true
-                        }
+                        },
+                        rewardViewModel = rewardViewModel
                     )
                 }
             }
@@ -208,104 +220,7 @@ fun VideosScreen(
             )
         }
 
-        // persistent REWARD PROGRESS BAR at the bottom of the screen
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .background(Color(0xCC121212)) // Translucent cinematic dark background
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                val secondsLeft = remember(wallet.videoProgress) {
-                    val remaining = 60f - wallet.videoProgress
-                    remaining.coerceIn(0f, 60f).toInt()
-                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "⏱️ Watch & Earn (1m Chest Cycle)",
-                        color = Color.LightGray,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (pendingChestType != null) "🚨 TAP THE CHEST TO CLAIM!" else "Next Chest in ${secondsLeft}s",
-                        color = if (pendingChestType != null) Color(0xFFE74C3C) else GoldCoins,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    // Progress Track Line
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp)
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(Color(0xFF2C2C2C))
-                    ) {
-                        val progressPct = (wallet.videoProgress / 60f).coerceIn(0f, 1f)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(progressPct)
-                                .background(Color(0xFFF5A623)) // orange (#F5A623) fill
-                        )
-                    }
-
-                    // Milestone Custom Interactive Nodes for Chests
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .fillMaxHeight()
-                    ) {
-                        // CHEST 1 — Wooden Chest at 20 second mark (bias = -0.333f)
-                        TimelineChestNode(
-                            bias = -0.333f,
-                            type = "wooden",
-                            isUnlocked = wallet.videoProgress >= 20f || wallet.claimedMin1,
-                            isPending = pendingChestType?.lowercase() == "wooden",
-                            countdownSeconds = pendingChestTimeLeft,
-                            onTap = { viewModel.claimPendingChest() }
-                        )
-
-                        // CHEST 2 — Golden Chest at 40 second mark (bias = 0.333f)
-                        TimelineChestNode(
-                            bias = 0.333f,
-                            type = "golden",
-                            isUnlocked = wallet.videoProgress >= 40f || wallet.claimedMin2,
-                            isPending = pendingChestType?.lowercase() == "golden",
-                            countdownSeconds = pendingChestTimeLeft,
-                            onTap = { viewModel.claimPendingChest() }
-                        )
-
-                        // CHEST 3 — Luxury/Diamond Chest at 60 second mark (bias = 1.0f)
-                        TimelineChestNode(
-                            bias = 1.0f,
-                            type = "luxury",
-                            isUnlocked = wallet.videoProgress >= 59.5f,
-                            isPending = pendingChestType?.lowercase() == "luxury",
-                            countdownSeconds = pendingChestTimeLeft,
-                            onTap = { viewModel.claimPendingChest() }
-                        )
-                    }
-                }
-            }
-        }
 
         // Add Upload Modal Sheet Dialog logic
         if (showUploadDialog) {
@@ -439,6 +354,16 @@ fun VideosScreen(
                 }
             }
         }
+
+        if (showUploadDialog) {
+            UploadVideoDialog(
+                onDismiss = { showUploadDialog = false },
+                onUpload = { title, creator, url ->
+                    viewModel.uploadVideo(title, creator, url, "")
+                    showUploadDialog = false
+                }
+            )
+        }
     }
 }
 
@@ -451,9 +376,44 @@ fun VideoShortsPlayerCard(
     isMuted: Boolean,
     onMuteToggle: () -> Unit,
     onShareClick: () -> Unit,
-    onMenuClick: () -> Unit
+    onMenuClick: () -> Unit,
+    rewardViewModel: com.example.ui.VideoRewardViewModel
 ) {
     val avatarUrl = video.authorAvatar.ifEmpty { "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100" }
+
+    val progressSeconds by rewardViewModel.progressSeconds.collectAsState()
+    val chest1Collected by rewardViewModel.chest1Collected.collectAsState()
+    val chest2Collected by rewardViewModel.chest2Collected.collectAsState()
+    val chest3Collected by rewardViewModel.chest3Collected.collectAsState()
+
+    val countdownText = remember(progressSeconds, chest1Collected, chest2Collected, chest3Collected) {
+        if (progressSeconds < 20) {
+            "Next Chest in ${20 - progressSeconds}s"
+        } else if (progressSeconds in 20..39) {
+            if (chest1Collected) {
+                "Next Chest in ${40 - progressSeconds}s"
+            } else {
+                "Tap Chest to claim!"
+            }
+        } else if (progressSeconds in 40..59) {
+            if (chest2Collected) {
+                "Next Chest in ${60 - progressSeconds}s"
+            } else {
+                "Tap Chest to claim!"
+            }
+        } else {
+            if (chest3Collected) {
+                "All chests collected ✓"
+            } else {
+                "Tap Chest to claim!"
+            }
+        }
+    }
+
+    val countdownColor = remember(progressSeconds, chest1Collected, chest2Collected, chest3Collected) {
+        val isAll = chest1Collected && chest2Collected && chest3Collected
+        if (isAll) Color(0xFF2ECC71) else Color(0xFFF5A623)
+    }
 
     Column(
         modifier = Modifier
@@ -520,14 +480,15 @@ fun VideoShortsPlayerCard(
             }
         }
 
-        // Below section: Crispy high-contrast white card containing creator uploader row + caption
+        // Below section: Crispy high-contrast white card containing creator uploader row + caption + integrated reward tracker Row 3
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color.White)
                 .padding(vertical = 12.dp, horizontal = 16.dp)
-                .padding(bottom = 98.dp) // Padded to leave clear space for reward indicator
+                .padding(bottom = 12.dp) // Reset to standard padding as progress bar is integrated internally
         ) {
+            // Row 1: Creator Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -616,7 +577,7 @@ fun VideoShortsPlayerCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Caption/title text below user row (gray, 13sp)
+            // Row 2: Caption/title text below user row (gray, 13sp)
             Text(
                 text = video.title,
                 color = TextGrey,
@@ -625,131 +586,303 @@ fun VideoShortsPlayerCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Row 3: Integrated Reward Section (light gray background #F8F8F8, 8dp padding, ~80dp total height)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(82.dp)
+                    .background(Color(0xFFF8F8F8), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                // Label row (above timeline bar)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "🕐", fontSize = 11.sp, modifier = Modifier.padding(end = 4.dp))
+                        Text(
+                            text = "Watch & Earn (1m Chest Cycle)",
+                            color = Color(0xFF888888),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Text(
+                        text = countdownText,
+                        color = countdownColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Timeline Bar
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    val containerWidth = maxWidth
+
+                    // Active Orange Progress Line
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF333333))
+                    ) {
+                        val progressFraction = (progressSeconds / 60f).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progressFraction)
+                                .background(Color(0xFFF5A623))
+                        )
+                    }
+
+                    // 1. Wooden Chest Node (at 33% bar width)
+                    ChestNodeOnTimeline(
+                        alignmentOffset = containerWidth * 0.33f,
+                        index = 1,
+                        chestType = "wooden",
+                        progressSeconds = progressSeconds,
+                        isCollected = chest1Collected,
+                        onTap = {
+                            rewardViewModel.tapChest("wooden", video.id)
+                        }
+                    )
+
+                    // 2. Golden Chest Node (at 66% bar width)
+                    ChestNodeOnTimeline(
+                        alignmentOffset = containerWidth * 0.66f,
+                        index = 2,
+                        chestType = "golden",
+                        progressSeconds = progressSeconds,
+                        isCollected = chest2Collected,
+                        onTap = {
+                            rewardViewModel.tapChest("golden", video.id)
+                        }
+                    )
+
+                    // 3. Premium Chest Node (at 100% bar width)
+                    ChestNodeOnTimeline(
+                        alignmentOffset = containerWidth,
+                        index = 3,
+                        chestType = "premium",
+                        progressSeconds = progressSeconds,
+                        isCollected = chest3Collected,
+                        onTap = {
+                            rewardViewModel.tapChest("premium", video.id)
+                        }
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-fun BoxScope.TimelineChestNode(
-    bias: Float,
-    type: String, // "wooden", "golden", "luxury"
-    isUnlocked: Boolean,
-    isPending: Boolean,
-    countdownSeconds: Int,
+fun BoxScope.ChestNodeOnTimeline(
+    alignmentOffset: androidx.compose.ui.unit.Dp,
+    index: Int, // 1, 2, 3
+    chestType: String, // "wooden", "golden", "premium"
+    progressSeconds: Int,
+    isCollected: Boolean,
     onTap: () -> Unit
 ) {
-    // Collect animation values if pending
-    val scale = if (isPending) {
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        val animatedScale by infiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.35f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(500, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulse_scale"
-        )
-        animatedScale
-    } else {
-        1.0f
+    val sizeDp = when (index) {
+        1 -> 28.dp
+        2 -> 32.dp
+        3 -> 36.dp
+        else -> 28.dp
     }
 
-    val chestColor = when (type) {
-        "wooden" -> Color(0xFF8B4513) // Brown `#8B4513`
-        "golden" -> Color(0xFFFFD700) // Gold `#FFD700`
-        "luxury" -> Color(0xFF9B59B6) // Purple `#9B59B6`
+    val chestColor = when (chestType.lowercase()) {
+        "wooden" -> Color(0xFF8B5E3C)
+        "golden" -> Color(0xFFFFD700)
+        "premium" -> Color(0xFF7B2FBE)
         else -> Color.Gray
     }
 
-    val chestIcon = when (type) {
+    val chestIcon = when (chestType.lowercase()) {
         "wooden" -> "🪵"
         "golden" -> "🏆"
-        "luxury" -> "👑"
+        "premium" -> "💎"
         else -> "📦"
     }
 
-    val labelText = when (type) {
+    val labelText = when (chestType.lowercase()) {
         "wooden" -> "WOODEN"
         "golden" -> "GOLDEN"
-        "luxury" -> "PREMIUM"
+        "premium" -> "PREMIUM"
         else -> ""
     }
 
+    // Determine lock state
+    val targetSeconds = when (index) {
+        1 -> 20
+        2 -> 40
+        3 -> 60
+        else -> 60
+    }
+    
+    val isUnlocked = progressSeconds >= targetSeconds
+
+    val isReaching = remember(progressSeconds, isUnlocked) {
+        !isUnlocked && when (index) {
+            1 -> progressSeconds in 10..19
+            2 -> progressSeconds in 30..39
+            3 -> progressSeconds in 50..59
+            else -> false
+        }
+    }
+
+    val isAvailableCollect = isUnlocked && !isCollected
+
+    val infiniteTransition = rememberInfiniteTransition(label = "chest_animations")
+
+    val bounceOffset by if (isAvailableCollect) {
+        infiniteTransition.animateValue(
+            initialValue = 0.dp,
+            targetValue = (-6).dp,
+            typeConverter = Dp.VectorConverter,
+            animationSpec = infiniteRepeatable(
+                animation = tween(400, easing = FastOutLinearInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bounce"
+        )
+    } else {
+        remember { mutableStateOf(0.dp) }
+    }
+
+    val pulseScale by if (isReaching || isAvailableCollect) {
+        infiniteTransition.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(550, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse"
+        )
+    } else {
+        remember { mutableStateOf(1.0f) }
+    }
+
+    val finalOpacity = if (isCollected || isUnlocked || isReaching) 1.0f else 0.40f
+
     Box(
         modifier = Modifier
-            .fillMaxHeight()
-            .align(androidx.compose.ui.BiasAlignment(bias, 0f)),
+            .offset(x = alignmentOffset - (sizeDp / 2), y = bounceOffset)
+            .graphicsLayer(alpha = finalOpacity),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Tap hint bubble
-            Box(modifier = Modifier.height(18.dp)) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isPending,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .offset(y = (-4).dp)
-                            .background(Color(0xFFE74C3C), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "TAP! ${countdownSeconds}s",
-                            color = Color.White,
-                            fontSize = 7.5.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
+            Box(
+                modifier = Modifier.height(14.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                if (isAvailableCollect) {
+                    Text(
+                        text = "COLLECT!",
+                        color = Color(0xFFF5A623),
+                        fontSize = 7.5.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                } else if (index == 3) {
+                    Text(
+                        text = "👑",
+                        fontSize = 11.sp
+                    )
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .size(if (isPending) 32.dp else 24.dp)
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale
+            Box(contentAlignment = Alignment.Center) {
+                if (isReaching || isAvailableCollect) {
+                    Box(
+                        modifier = Modifier
+                            .size(sizeDp)
+                            .graphicsLayer(scaleX = pulseScale, scaleY = pulseScale)
+                            .clip(CircleShape)
+                            .background(chestColor.copy(alpha = 0.25f))
+                            .border(1.5.dp, chestColor.copy(alpha = 0.35f), CircleShape)
                     )
-                    .clip(CircleShape)
-                    .background(
-                        if (isUnlocked || isPending) {
-                            androidx.compose.ui.graphics.Brush.radialGradient(
-                                colors = listOf(chestColor, Color.Black)
-                            )
-                        } else {
-                            androidx.compose.ui.graphics.Brush.radialGradient(
-                                colors = listOf(Color(0xFF222222), Color(0xFF111111))
-                            )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(sizeDp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isUnlocked || isReaching) {
+                                androidx.compose.ui.graphics.Brush.radialGradient(
+                                    colors = listOf(chestColor, Color.Black.copy(alpha = 0.8f))
+                                )
+                            } else {
+                                androidx.compose.ui.graphics.Brush.radialGradient(
+                                    colors = listOf(Color(0xFF2C2C2C), Color(0xFF1E1E1E))
+                                )
+                            }
+                        )
+                        .border(
+                            width = if (isAvailableCollect) 2.dp else 1.dp,
+                            color = if (isAvailableCollect) Color.White else if (isUnlocked) chestColor else Color(0xFF444444),
+                            shape = CircleShape
+                        )
+                        .clickable(enabled = isAvailableCollect) {
+                            onTap()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = chestIcon,
+                        fontSize = (sizeDp.value * 0.5f).sp
+                    )
+
+                    if (isCollected) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .background(Color(0xFF2ECC71), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "✓",
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
-                    )
-                    .border(
-                        width = if (isPending) 2.dp else 1.dp,
-                        color = if (isPending) Color.White else if (isUnlocked) chestColor else Color(0xFF444444),
-                        shape = CircleShape
-                    )
-                    .clickable(enabled = isPending) {
-                        onTap()
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = chestIcon,
-                    fontSize = if (isPending) 15.sp else 11.sp
-                )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(2.dp))
 
             Text(
                 text = labelText,
-                color = if (isUnlocked || isPending) chestColor else Color.Gray,
-                fontSize = 7.sp,
+                color = if (isUnlocked) chestColor else Color.Gray,
+                fontSize = 8.sp,
                 fontWeight = FontWeight.Bold
             )
         }

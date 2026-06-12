@@ -95,6 +95,9 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
+        // Start real-time Firestore listener for unopened chests
+        startChestsFirestoreListener()
+
         // Load BDT monetization stats
         loadBdtBalance()
         loadWithdrawalHistory()
@@ -463,12 +466,80 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
                 else -> null
             }
             if (rewards != null) {
-                _chestRewardResult.value = rewards
+                _chestRewardResult.value = rewards + mapOf("chestType" to type.capitalize())
             } else {
                 _gameMessage.value = "⚠️ No unopened $type chests available!"
                 delay(3000L)
                 _gameMessage.value = null
             }
+        }
+    }
+
+    fun openAllWooden() {
+        viewModelScope.launch {
+            var totalCoins = 0L
+            var totalTickets = 0
+            var totalCash = 0.0
+            val currentWallet = repository.getWalletDirect()
+            val countToOpen = currentWallet.woodenChests
+            if (countToOpen <= 0) return@launch
+            
+            for (i in 0 until countToOpen) {
+                val rewards = repository.openWoodenChest()
+                if (rewards != null) {
+                    totalCoins += (rewards["coins"] as? Long) ?: 0L
+                    totalTickets += (rewards["tickets"] as? Int) ?: 0
+                    totalCash += (rewards["cash"] as? Double) ?: 0.0
+                }
+            }
+            
+            _chestRewardResult.value = mapOf(
+                "coins" to totalCoins,
+                "tickets" to totalTickets,
+                "cash" to totalCash,
+                "chestType" to "Wooden Multiple"
+            )
+        }
+    }
+
+    fun startChestsFirestoreListener() {
+        if (repository.isFirebaseAvailable) {
+            val db = repository.getFirebaseFirestore()
+            val auth = repository.getFirebaseAuth()
+            val userId = auth?.currentUser?.uid ?: _wallet.value.userId
+            db?.collection("user_chests")
+                ?.whereEqualTo("userId", userId)
+                ?.whereEqualTo("isOpened", false)
+                ?.addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("ClapEarnViewModel", "Failed to listen to user_chests in Firestore: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        var woodCount = 0
+                        var goldCount = 0
+                        var diamondCount = 0
+                        for (doc in snapshot.documents) {
+                            val type = doc.getString("chestType") ?: ""
+                            when (type.lowercase()) {
+                                "wood", "wooden" -> woodCount++
+                                "gold", "golden" -> goldCount++
+                                "diamond", "luxury", "premium" -> diamondCount++
+                            }
+                        }
+                        
+                        viewModelScope.launch {
+                            val currentWallet = repository.getWalletDirect()
+                            val updatedWallet = currentWallet.copy(
+                                woodenChests = woodCount,
+                                goldenChests = goldCount,
+                                luxuryChests = diamondCount,
+                                unclaimedChests = woodCount + goldCount + diamondCount
+                            )
+                            repository.updateWallet(updatedWallet)
+                        }
+                    }
+                }
         }
     }
 

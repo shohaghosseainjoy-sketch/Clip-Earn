@@ -100,34 +100,66 @@ fun RewardsScreen(
                             .fillMaxWidth()
                             .padding(vertical = 8.dp)
                     ) {
-                        Text(
-                            text = "💼 MY CHESTS",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.Black,
-                            modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp)
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "💼 MY CHESTS",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.Black
+                            )
+                            if (wallet.woodenChests >= 3) {
+                                Button(
+                                    onClick = { viewModel.openAllWooden() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5A623)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Text("Open All Wooden", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+                                }
+                            }
+                        }
                         
-                        if (wallet.woodenChests > 0) {
-                            MyChestCard(
-                                type = "wooden",
-                                count = wallet.woodenChests,
-                                onOpen = { viewModel.openRewardChest("wooden") }
-                            )
-                        }
-                        if (wallet.goldenChests > 0) {
-                            MyChestCard(
-                                type = "golden",
-                                count = wallet.goldenChests,
-                                onOpen = { viewModel.openRewardChest("golden") }
-                            )
-                        }
-                        if (wallet.luxuryChests > 0) {
-                            MyChestCard(
-                                type = "luxury",
-                                count = wallet.luxuryChests,
-                                onOpen = { viewModel.openRewardChest("luxury") }
-                            )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (wallet.woodenChests > 0) {
+                                item {
+                                    MyChestCard(
+                                        type = "wooden",
+                                        count = wallet.woodenChests,
+                                        onOpen = { viewModel.openRewardChest("wooden") }
+                                    )
+                                }
+                            }
+                            if (wallet.goldenChests > 0) {
+                                item {
+                                    MyChestCard(
+                                        type = "golden",
+                                        count = wallet.goldenChests,
+                                        onOpen = { viewModel.openRewardChest("golden") }
+                                    )
+                                }
+                            }
+                            if (wallet.luxuryChests > 0) {
+                                item {
+                                    MyChestCard(
+                                        type = "luxury",
+                                        count = wallet.luxuryChests,
+                                        onOpen = { viewModel.openRewardChest("luxury") }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1667,20 +1699,13 @@ fun MyChestCard(
     onOpen: () -> Unit
 ) {
     val cardColor = when (type) {
-        "wooden" -> Color(0xFF8B4513)
-        "golden" -> Color(0xFFD4AF37) // darker gold #D4AF37 for text contrast
-        "luxury" -> Color(0xFF9B59B6)
+        "wooden" -> Color(0xFF8B5E3C) // Brown #8B5E3C
+        "golden" -> Color(0xFFFFD700) // Gold #FFD700
+        "luxury" -> Color(0xFF7B2FBE) // Purple #7B2FBE
         else -> Color.Gray
     }
     
     val displayName = when (type) {
-        "wooden" -> "Chest"
-        "golden" -> "Gold Chest"
-        "luxury" -> "Diamond Chest"
-        else -> "Chest"
-    }
-    
-    val badgeName = when (type) {
         "wooden" -> "Wooden Chest"
         "golden" -> "Golden Chest"
         "luxury" -> "Diamond Chest"
@@ -1694,69 +1719,106 @@ fun MyChestCard(
         else -> "📦"
     }
 
-    Card(
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = cardColor.copy(alpha = 0.08f)),
-        border = BorderStroke(1.5.dp, cardColor.copy(alpha = 0.5f))
+            .padding(top = 10.dp, bottom = 4.dp, start = 4.dp, end = 12.dp)
+            .size(width = 120.dp, height = 140.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+        // Render layers of card stack if count > 1
+        if (count > 1) {
+            Card(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(x = 6.dp, y = (-6).dp)
+                    .graphicsLayer(alpha = 0.4f),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = cardColor.copy(alpha = 0.05f)),
+                border = BorderStroke(1.dp, cardColor.copy(alpha = 0.2f))
+            ) { Box(modifier = Modifier.fillMaxSize()) }
+        }
+        if (count > 2) {
+            Card(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(x = 12.dp, y = (-12).dp)
+                    .graphicsLayer(alpha = 0.2f),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = cardColor.copy(alpha = 0.03f)),
+                border = BorderStroke(1.dp, cardColor.copy(alpha = 0.1f))
+            ) { Box(modifier = Modifier.fillMaxSize()) }
+        }
+
+        // Main upper Card
+        Card(
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.5.dp, cardColor.copy(alpha = 0.4f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Chest Illustration
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Top: chest illustration (60dp circle)
                 Box(
                     modifier = Modifier
-                        .size(54.dp)
+                        .size(60.dp)
                         .clip(CircleShape)
                         .background(cardColor.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = chestIllustration, fontSize = 26.sp)
+                    Text(text = chestIllustration, fontSize = 28.sp)
                 }
-                
-                Spacer(modifier = Modifier.width(14.dp))
-                
-                Column {
+
+                // Middle: chest name
+                Text(
+                    text = displayName,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+
+                // Bottom: "TAP TO OPEN" orange button
+                Button(
+                    onClick = onOpen,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5A623)),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                ) {
                     Text(
-                        text = displayName,
-                        fontSize = 17.sp,
+                        text = "TAP TO OPEN",
                         fontWeight = FontWeight.Black,
-                        color = cardColor
+                        fontSize = 8.sp,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(cardColor, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = if (count > 1) "x$count $badgeName" else badgeName,
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
             }
-            
-            Button(
-                onClick = onOpen,
-                colors = ButtonDefaults.buttonColors(containerColor = cardColor),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+        }
+
+        // Top-right corner badge "x3" if count > 1
+        if (count > 1) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
+                    .background(Color.Red, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "TAP TO OPEN",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 10.sp,
-                    color = if (type == "golden") Color.Black else Color.White
+                    text = "x$count",
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Black
                 )
             }
         }
