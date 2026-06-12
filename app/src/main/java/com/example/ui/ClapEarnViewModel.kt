@@ -36,6 +36,12 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     private val _isVideoPlaying = MutableStateFlow(false)
     val isVideoPlaying: StateFlow<Boolean> = _isVideoPlaying.asStateFlow()
 
+    private val _pendingChestType = MutableStateFlow<String?>(null)
+    val pendingChestType: StateFlow<String?> = _pendingChestType.asStateFlow()
+
+    private val _pendingChestTimeLeft = MutableStateFlow(10)
+    val pendingChestTimeLeft: StateFlow<Int> = _pendingChestTimeLeft.asStateFlow()
+
     // Chest open result banner state
     private val _chestRewardResult = MutableStateFlow<Map<String, Any>?>(null)
     val chestRewardResult: StateFlow<Map<String, Any>?> = _chestRewardResult.asStateFlow()
@@ -67,6 +73,17 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     private val _referrals = MutableStateFlow<List<Map<String, Any>>>(emptyList())
     val referrals: StateFlow<List<Map<String, Any>>> = _referrals.asStateFlow()
 
+    // BDT Monetization & Wallet states (Adsterra Direct Click integration)
+    private val _bdtBalance = MutableStateFlow(0.0)
+    val bdtBalance: StateFlow<Double> = _bdtBalance.asStateFlow()
+
+    private val _withdrawalHistory = MutableStateFlow<List<Map<String, String>>>(emptyList())
+    val withdrawalHistory: StateFlow<List<Map<String, String>>> = _withdrawalHistory.asStateFlow()
+
+    // Track user's given claps (up to 5) per video
+    private val _videoClapsMap = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val videoClapsMap: StateFlow<Map<String, Int>> = _videoClapsMap.asStateFlow()
+
     private var videoProgressJob: Job? = null
 
     init {
@@ -77,6 +94,10 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
                 loadReferralsFromFirestore()
             }
         }
+
+        // Load BDT monetization stats
+        loadBdtBalance()
+        loadWithdrawalHistory()
 
         // Set fallback videos instantly first
         _videos.value = getFallbackVideos()
@@ -277,43 +298,132 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     fun selectVideo(index: Int) {
         _currentPlayingIndex.value = index
         _isVideoPlaying.value = true
+        
+        val videoList = _videos.value
+        if (index in videoList.indices) {
+            val videoId = videoList[index].id
+            viewModelScope.launch {
+                val isCompleted = repository.isVideoCompleted(videoId)
+                if (isCompleted) {
+                    repository.setVideoProgressCompletedForCompletedVideo()
+                } else {
+                    repository.resetVideoProgressForNewVideo()
+                }
+            }
+        }
+        _pendingChestType.value = null
         startVideoProgressSimulation()
+    }
+
+    fun claimPendingChest() {
+        val type = _pendingChestType.value ?: return
+        _pendingChestType.value = null
+        viewModelScope.launch {
+            val vList = _videos.value
+            val idx = _currentPlayingIndex.value
+            val currentVideoId = if (idx in vList.indices) vList[idx].id else "unknown_video"
+            repository.claimVideoChest(type, currentVideoId)
+            val chestName = when (type.lowercase()) {
+                "wooden", "wood" -> "Wooden Chest"
+                "golden", "gold" -> "Golden Chest"
+                "luxury", "diamond" -> "Premium Luxury Chest"
+                else -> "Chest"
+            }
+            _gameMessage.value = "🎉 $chestName rewarded to Rewards Tab!"
+            delay(3000L)
+            if (_gameMessage.value?.contains(chestName) == true) {
+                _gameMessage.value = null
+            }
+        }
+    }
+
+    fun autoCollectPendingChest() {
+        val type = _pendingChestType.value ?: return
+        _pendingChestType.value = null
+        viewModelScope.launch {
+            val vList = _videos.value
+            val idx = _currentPlayingIndex.value
+            val currentVideoId = if (idx in vList.indices) vList[idx].id else "unknown_video"
+            repository.claimVideoChest(type, currentVideoId)
+            val chestName = when (type.lowercase()) {
+                "wooden", "wood" -> "Wooden Chest"
+                "golden", "gold" -> "Golden Chest"
+                "luxury", "diamond" -> "Premium Luxury Chest"
+                else -> "Chest"
+            }
+            _gameMessage.value = "⏱️ $chestName auto-saved to Rewards!"
+            delay(3000L)
+            if (_gameMessage.value?.contains(chestName) == true) {
+                _gameMessage.value = null
+            }
+        }
     }
 
     private fun startVideoProgressSimulation() {
         videoProgressJob?.cancel()
         videoProgressJob = viewModelScope.launch {
             while (_isVideoPlaying.value) {
-                delay(1000L) // updates every second
-                // Watching a video fills up the progress bar timeline.
-                // We increment progress by 1 second.
-                val unlockedType = repository.updateVideoProgress(1.0f)
-                if (unlockedType != null) {
-                    val chestName = when (unlockedType) {
-                        "wooden" -> "Wooden Chest"
-                        "golden" -> "Golden Chest"
-                        "luxury" -> "Premium Luxury Chest"
-                        else -> "Chest"
+                if (_pendingChestType.value != null) {
+                    delay(1000L)
+                    val nextTime = _pendingChestTimeLeft.value - 1
+                    if (nextTime <= 0) {
+                        autoCollectPendingChest()
+                    } else {
+                        _pendingChestTimeLeft.value = nextTime
                     }
-                    _gameMessage.value = "🎁 $chestName Unlocked! Saved in Rewards!"
-                    
-                    viewModelScope.launch {
-                        delay(4000L)
-                        if (_gameMessage.value?.contains(chestName) == true) {
-                            _gameMessage.value = null
-                        }
+                } else {
+                    delay(1000L)
+                    if (_pendingChestType.value == null && _isVideoPlaying.value) {
+                        incrementAndCheckProgress()
                     }
                 }
             }
         }
     }
 
-    // Give a clap (Like feature) to earn instant 15 ClapCoins
+    private suspend fun incrementAndCheckProgress() {
+        val current = repository.getWalletDirect()
+        val currentProgress = current.videoProgress
+        
+        val vList = _videos.value
+        val idx = _currentPlayingIndex.value
+        val currentVideoId = if (idx in vList.indices) vList[idx].id else "unknown_video"
+        
+        if (repository.isVideoCompleted(currentVideoId)) {
+            repository.setVideoProgressCompletedForCompletedVideo()
+            return
+        }
+        
+        // Let's check where the next tick of progress takes us
+        val nextProgress = currentProgress + 1.0f
+        
+        if (nextProgress >= 20.0f && !current.claimedMin1) {
+            _pendingChestType.value = "wooden"
+            _pendingChestTimeLeft.value = 10
+            repository.updateProgressDirectly(20.0f)
+        } else if (nextProgress >= 40.0f && !current.claimedMin2) {
+            _pendingChestType.value = "golden"
+            _pendingChestTimeLeft.value = 10
+            repository.updateProgressDirectly(40.0f)
+        } else if (nextProgress >= 60.0f) {
+            _pendingChestType.value = "luxury"
+            _pendingChestTimeLeft.value = 10
+            repository.updateProgressDirectly(60.0f)
+        } else {
+            repository.updateProgressDirectly(nextProgress)
+        }
+    }
+
+    // Give a clap (Like feature) to earn instant 15 ClapCoins (Max 5 claps per video)
     fun clapVideo(index: Int) {
         val list = _videos.value.toMutableList()
         if (index in list.indices) {
             val video = list[index]
-            if (!video.isLiked) {
+            val currentClaps = _videoClapsMap.value[video.id] ?: 0
+            if (currentClaps < 5) {
+                val nextClaps = currentClaps + 1
+                _videoClapsMap.value = _videoClapsMap.value + (video.id to nextClaps)
+
                 list[index] = video.copy(
                     clapsCount = video.clapsCount + 1,
                     isLiked = true
@@ -326,6 +436,18 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
                         clapCoins = current.clapCoins + 15L,
                         totalClapsGiven = current.totalClapsGiven + 1
                     ))
+
+                    if (repository.isFirebaseAvailable) {
+                        val db = repository.getFirebaseFirestore()
+                        if (db != null) {
+                            try {
+                                db.collection("videos").document(video.id)
+                                    .update("clapsCount", video.clapsCount + 1)
+                            } catch (e: Exception) {
+                                Log.e("ClapEarnViewModel", "Failed to increment claps in firestore: ${e.message}")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -811,6 +933,119 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
             delay(5000L)
             _gameMessage.value = null
         }
+    }
+
+    // BDT Monetization & Wallet Methods for Adsterra Direct Click
+    fun loadBdtBalance() {
+        val prefs = getApplication<Application>().getSharedPreferences("clapearn_monetization_prefs", android.content.Context.MODE_PRIVATE)
+        val balance = prefs.getFloat("bdt_balance", 0.0f).toDouble()
+        _bdtBalance.value = balance
+    }
+
+    fun earnBdt(amount: Double) {
+        val prefs = getApplication<Application>().getSharedPreferences("clapearn_monetization_prefs", android.content.Context.MODE_PRIVATE)
+        val current = prefs.getFloat("bdt_balance", 0.0f).toDouble()
+        val updated = current + amount
+        prefs.edit().putFloat("bdt_balance", updated.toFloat()).apply()
+        _bdtBalance.value = updated
+        
+        // Sync to Firestore
+        viewModelScope.launch {
+            if (repository.isFirebaseAvailable) {
+                val auth = repository.getFirebaseAuth()
+                val db = repository.getFirebaseFirestore()
+                val uid = auth?.currentUser?.uid
+                if (uid != null && db != null) {
+                    try {
+                        db.collection("users").document(uid).update("balanceBdt", updated)
+                    } catch (e: Exception) {
+                        Log.e("ClapEarnViewModel", "Failed to sync BDT balance: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    fun loadWithdrawalHistory() {
+        val prefs = getApplication<Application>().getSharedPreferences("clapearn_monetization_prefs", android.content.Context.MODE_PRIVATE)
+        val historyString = prefs.getString("withdrawal_history", "") ?: ""
+        val list = mutableListOf<Map<String, String>>()
+        if (historyString.isNotEmpty()) {
+            val lines = historyString.split("\n")
+            for (line in lines) {
+                if (line.isEmpty()) continue
+                val parts = line.split("\\|")
+                if (parts.size >= 5) {
+                    list.add(mapOf(
+                        "amount" to parts[0],
+                        "phone" to parts[1],
+                        "method" to parts[2],
+                        "status" to parts[3],
+                        "timestamp" to parts[4]
+                    ))
+                }
+            }
+        }
+        _withdrawalHistory.value = list.sortedByDescending { it["timestamp"]?.toLongOrNull() ?: 0L }
+    }
+
+    fun withdrawBdt(amount: Double, phone: String, method: String, onResult: (Boolean, String) -> Unit) {
+        val prefs = getApplication<Application>().getSharedPreferences("clapearn_monetization_prefs", android.content.Context.MODE_PRIVATE)
+        val current = prefs.getFloat("bdt_balance", 0.0f).toDouble()
+        
+        val minAmount = if (method.lowercase() == "bkash" || method.lowercase() == "nagad") {
+            100.0
+        } else {
+            20.0 // Flexiload
+        }
+        
+        if (amount < minAmount) {
+            onResult(false, "Minimum withdrawal for $method is $minAmount BDT!")
+            return
+        }
+        
+        if (current < amount) {
+            onResult(false, "Insufficient BDT balance! Need ${minAmount - current} BDT additional.")
+            return
+        }
+        
+        val updated = current - amount
+        prefs.edit().putFloat("bdt_balance", updated.toFloat()).apply()
+        _bdtBalance.value = updated
+        
+        // Add to local history
+        val historyString = prefs.getString("withdrawal_history", "") ?: ""
+        val tstamp = System.currentTimeMillis().toString()
+        val newLine = "$amount|$phone|$method|pending|$tstamp"
+        val newHistory = if (historyString.isEmpty()) newLine else "$historyString\n$newLine"
+        prefs.edit().putString("withdrawal_history", newHistory).apply()
+        
+        loadWithdrawalHistory()
+        
+        // Sync to Firestore
+        viewModelScope.launch {
+            if (repository.isFirebaseAvailable) {
+                val auth = repository.getFirebaseAuth()
+                val db = repository.getFirebaseFirestore()
+                val uid = auth?.currentUser?.uid
+                if (uid != null && db != null) {
+                    try {
+                        db.collection("users").document(uid).update("balanceBdt", updated)
+                        db.collection("withdrawals").add(mapOf(
+                            "userId" to uid,
+                            "amount" to amount,
+                            "account" to phone,
+                            "method" to method,
+                            "status" to "pending",
+                            "timestamp" to System.currentTimeMillis()
+                        ))
+                    } catch (e: Exception) {
+                        Log.e("ClapEarnViewModel", "Failed to sync withdrawal: ${e.message}")
+                    }
+                }
+            }
+        }
+        onResult(true, "Withdrawal request of $amount BDT submitted successfully!")
     }
 
     override fun onCleared() {

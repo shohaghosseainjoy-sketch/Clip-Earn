@@ -2,9 +2,11 @@ package com.example.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.ClapEarnViewModel
 import com.example.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun GamesScreen(
@@ -44,6 +48,17 @@ fun GamesScreen(
 
     var activeGameTab by remember { mutableStateOf(0) } // 0: Spin Wheel, 1: Scratch Card
 
+    // Collect our BDT monetization states
+    val bdtBalance by viewModel.bdtBalance.collectAsState()
+    val withdrawalHistory by viewModel.withdrawalHistory.collectAsState()
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val coroutineScope = rememberCoroutineScope()
+    var showWithdrawDialog by remember { mutableStateOf(false) }
+
+    val dakPurple = Color(0xFF8A2BE2)
+    val dakSecondary = Color(0xFF9370DB)
+    val dakGradient = Brush.linearGradient(listOf(dakPurple, dakSecondary))
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -51,6 +66,300 @@ fun GamesScreen(
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // --- DAK ADS MONETIZATION CARD ---
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(dakGradient)
+                    .padding(20.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "DAK AD-EARNING WALLET",
+                                color = Color.White.copy(alpha = 0.8f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = String.format("%.3f BDT", bdtBalance),
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                        
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("💼", fontSize = 22.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Watch Ads & Earn Button
+                        Button(
+                            onClick = {
+                                viewModel.earnBdt(0.01)
+                                try {
+                                    uriHandler.openUri("https://www.revenuecpmgate.com/ivhqy3ex?key=c0943ab31e4637775ea0a7449e014bb4")
+                                } catch (e: Exception) {}
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 12.dp),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = dakPurple, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Watch Ads (+0.01)", color = dakPurple, fontWeight = FontWeight.Black, fontSize = 11.sp)
+                        }
+
+                        // Withdraw BDT Button
+                        OutlinedButton(
+                            onClick = { showWithdrawDialog = true },
+                            border = BorderStroke(1.5.dp, Color.White),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Text("💸 Withdraw BDT", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                    }
+
+                    // Withdrawal task history
+                    if (withdrawalHistory.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Payout Tasks History",
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        
+                        withdrawalHistory.take(3).forEach { item ->
+                            val dateStr = try {
+                                val mill = item["timestamp"]?.toLongOrNull() ?: System.currentTimeMillis()
+                                val formatter = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+                                formatter.format(java.util.Date(mill))
+                            } catch (e: Exception) { "" }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.1f))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "${item["amount"]} BDT via ${item["method"]?.uppercase()}",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "A/C: ${item["phone"]} • $dateStr",
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 9.sp
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (item["status"] == "pending") Color(0xFFFF9800) else Color(0xFF4CAF50))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = item["status"]?.uppercase() ?: "PENDING",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Black
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- WITHDRAW BDT POPUP DIALOG ---
+        if (showWithdrawDialog) {
+            var inputAmount by remember { mutableStateOf("") }
+            var inputAccount by remember { mutableStateOf("") }
+            var selectedMethod by remember { mutableStateOf("bKash") }
+            var statusMessage by remember { mutableStateOf<String?>(null) }
+            var isError by remember { mutableStateOf(false) }
+
+            AlertDialog(
+                onDismissRequest = { showWithdrawDialog = false },
+                title = {
+                    Text(
+                        text = "💸 Cashout BDT Wallet",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 18.sp,
+                        color = Color.Black
+                    )
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Fill recipient credentials below to cash out your balance.",
+                            fontSize = 12.sp,
+                            color = Color.DarkGray
+                        )
+
+                        // Selector Rows
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf("bKash", "Nagad", "Flexiload").forEach { method ->
+                                val isSelected = selectedMethod.lowercase() == method.lowercase()
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) dakPurple else Color(0xFFF1F1F1))
+                                        .clickable { selectedMethod = method }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = method,
+                                        color = if (isSelected) Color.White else Color.Black,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        // Minimum Guidelines representation
+                        val guidelinesInfo = if (selectedMethod == "Flexiload") {
+                            "Minimum Cashout: 20 BDT"
+                        } else {
+                            "Minimum Cashout: 100 BDT"
+                        }
+                        Text(
+                            text = "💡 Guideline: $guidelinesInfo",
+                            color = dakPurple,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+
+                        // Mobile number textfield
+                        OutlinedTextField(
+                            value = inputAccount,
+                            onValueChange = { inputAccount = it },
+                            label = { Text("Mobile Number (BKash/Nagad/Phone)") },
+                            placeholder = { Text("01xxxxxxxxx") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = dakPurple,
+                                focusedLabelColor = dakPurple
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // Numeric Amount field
+                        OutlinedTextField(
+                            value = inputAmount,
+                            onValueChange = { inputAmount = it },
+                            label = { Text("Amount (BDT)") },
+                            placeholder = { Text("Enter BDT Amount") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = dakPurple,
+                                focusedLabelColor = dakPurple
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        if (statusMessage != null) {
+                            Text(
+                                text = statusMessage!!,
+                                color = if (isError) Color.Red else Color(0xFF4CAF50),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val amt = inputAmount.toDoubleOrNull()
+                            if (amt == null) {
+                                statusMessage = "Please enter a valid numeric amount!"
+                                isError = true
+                                return@Button
+                            }
+                            if (inputAccount.trim().isEmpty()) {
+                                statusMessage = "Please input valid mobile destination number!"
+                                isError = true
+                                return@Button
+                            }
+
+                            viewModel.withdrawBdt(amt, inputAccount.trim(), selectedMethod) { success, msg ->
+                                statusMessage = msg
+                                isError = !success
+                                if (success) {
+                                    coroutineScope.launch {
+                                        delay(1500)
+                                        showWithdrawDialog = false
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = dakPurple)
+                    ) {
+                        Text("Confirm", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showWithdrawDialog = false }) {
+                        Text("Cancel", color = Color.Gray)
+                    }
+                }
+            )
+        }
+
         // Game Category Selector Tag
         Row(
             modifier = Modifier
@@ -138,13 +447,25 @@ fun GamesScreen(
                 isSpinning = isSpinning,
                 spinAngle = spinAngle,
                 clapCoins = wallet.clapCoins,
-                onSpinClick = { viewModel.playLuckySpin() }
+                onSpinClick = { viewModel.playLuckySpin() },
+                onEarnSponsorAd = {
+                    viewModel.earnBdt(0.01)
+                    try {
+                        uriHandler.openUri("https://www.revenuecpmgate.com/ivhqy3ex?key=c0943ab31e4637775ea0a7449e014bb4")
+                    } catch (e: Exception) {}
+                }
             )
         } else {
             // SCRATCH CARD COMPONENT
             ScratchCardLayout(
                 clapCoins = wallet.clapCoins,
-                onScratchClick = { viewModel.playScratchCard() }
+                onScratchClick = { viewModel.playScratchCard() },
+                onEarnSponsorAd = {
+                    viewModel.earnBdt(0.01)
+                    try {
+                        uriHandler.openUri("https://www.revenuecpmgate.com/ivhqy3ex?key=c0943ab31e4637775ea0a7449e014bb4")
+                    } catch (e: Exception) {}
+                }
             )
         }
 
@@ -157,7 +478,8 @@ fun LuckyWheelLayout(
     isSpinning: Boolean,
     spinAngle: Float,
     clapCoins: Long,
-    onSpinClick: () -> Unit
+    onSpinClick: () -> Unit,
+    onEarnSponsorAd: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -276,6 +598,47 @@ fun LuckyWheelLayout(
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp
         )
+
+        // Sponsored Offer link below Lucky Wheel
+        Spacer(modifier = Modifier.height(24.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clickable { onEarnSponsorAd() },
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9C4)),
+            border = BorderStroke(1.5.dp, Color(0xFFFFD54F)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🎁", fontSize = 28.sp)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Sponsor Flash Bonus!",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE65100),
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = "Complete sponsor tasks & claim instant 0.01 BDT reward!",
+                        color = Color.Black.copy(alpha = 0.7f),
+                        fontSize = 11.sp
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFFD54F))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("GO ➔", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                }
+            }
+        }
     }
 }
 
@@ -318,7 +681,8 @@ fun WheelLabelsOverlay() {
 @Composable
 fun ScratchCardLayout(
     clapCoins: Long,
-    onScratchClick: () -> Unit
+    onScratchClick: () -> Unit,
+    onEarnSponsorAd: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -420,5 +784,45 @@ fun ScratchCardLayout(
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp
         )
+
+        // Sponsored Offer link below Scratch Card
+        Spacer(modifier = Modifier.height(24.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onEarnSponsorAd() },
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9C4)),
+            border = BorderStroke(1.5.dp, Color(0xFFFFD54F)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🎁", fontSize = 28.sp)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Sponsor Scratch Match!",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE65100),
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = "Explore sponsor link & get instant 0.01 BDT gift!",
+                        color = Color.Black.copy(alpha = 0.7f),
+                        fontSize = 11.sp
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFFD54F))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("GO ➔", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                }
+            }
+        }
     }
 }

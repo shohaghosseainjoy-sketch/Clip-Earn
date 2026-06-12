@@ -1,12 +1,12 @@
 package com.example.ui.screens
 
 import androidx.annotation.OptIn
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -37,6 +37,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.compose.animation.core.*
+import androidx.compose.ui.graphics.graphicsLayer
 import com.example.ui.ClapEarnViewModel
 import com.example.ui.RewardPopupData
 import com.example.ui.models.VideoItem
@@ -55,26 +57,51 @@ fun VideosScreen(
     val currentPlayingIndex by viewModel.currentPlayingIndex.collectAsState()
     val isPlaying by viewModel.isVideoPlaying.collectAsState()
     val completedPopup by viewModel.completedRewardPopup.collectAsState()
+    val pendingChestType by viewModel.pendingChestType.collectAsState()
+    val pendingChestTimeLeft by viewModel.pendingChestTimeLeft.collectAsState()
 
     var showUploadDialog by remember { mutableStateOf(false) }
+
+    // ClipClaps customized tabs & menu details states
+    var selectedCategory by remember { mutableStateOf("For You") }
+    var isGlobalMuted by remember { mutableStateOf(true) }
+    var showMenuSheet by remember { mutableStateOf(false) }
+    var selectedVideoForMenu by remember { mutableStateOf<VideoItem?>(null) }
+
+    val filteredVideos = remember(videos, selectedCategory) {
+        when (selectedCategory) {
+            "Trending" -> videos.sortedByDescending { it.clapsCount }
+            "Following" -> videos.filter { it.creator.lowercase() == "you" || it.creator.hashCode() % 2 == 0 }
+            "New" -> videos.sortedByDescending { it.id }
+            else -> videos // For You
+        }
+    }
 
     // Setup video visible list auto-play integration with VerticalPager
     val pagerState = rememberPagerState(
         initialPage = 0,
-        pageCount = { videos.size }
+        pageCount = { filteredVideos.size }
     )
 
     // Observe pagerState.currentPage and trigger viewModel.selectVideo(currentPage)
-    LaunchedEffect(pagerState.currentPage) {
-        if (videos.isNotEmpty() && pagerState.currentPage in videos.indices) {
-            viewModel.selectVideo(pagerState.currentPage)
+    LaunchedEffect(pagerState.currentPage, selectedCategory) {
+        val video = filteredVideos.getOrNull(pagerState.currentPage)
+        if (video != null) {
+            val originalIndex = videos.indexOfFirst { it.id == video.id }
+            if (originalIndex != -1) {
+                viewModel.selectVideo(originalIndex)
+            }
         }
     }
 
     // Direct scroll handle if sync is requested from outer navigation
     LaunchedEffect(currentPlayingIndex) {
-        if (videos.isNotEmpty() && currentPlayingIndex in videos.indices && pagerState.currentPage != currentPlayingIndex) {
-            pagerState.scrollToPage(currentPlayingIndex)
+        val video = videos.getOrNull(currentPlayingIndex)
+        if (video != null) {
+            val filteredIndex = filteredVideos.indexOfFirst { it.id == video.id }
+            if (filteredIndex != -1 && pagerState.currentPage != filteredIndex) {
+                pagerState.scrollToPage(filteredIndex)
+            }
         }
     }
 
@@ -84,14 +111,14 @@ fun VideosScreen(
             .background(Color.Black) // Immersive deep black background
     ) {
         // Vertical Pager holding full size content
-        if (videos.isNotEmpty()) {
+        if (filteredVideos.isNotEmpty()) {
             VerticalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize()
             ) { page ->
-                val video = videos.getOrNull(page)
+                val video = filteredVideos.getOrNull(page)
                 if (video != null) {
-                    val isCurrent = page == currentPlayingIndex
+                    val isCurrent = page == pagerState.currentPage
                     VideoShortsPlayerCard(
                         video = video,
                         isPlaying = isCurrent && isPlaying,
@@ -99,7 +126,20 @@ fun VideosScreen(
                             viewModel.toggleVideoPlay()
                         },
                         onClapClick = {
-                            viewModel.clapVideo(page)
+                            val originalIdx = videos.indexOfFirst { it.id == video.id }
+                            if (originalIdx != -1) {
+                                viewModel.clapVideo(originalIdx)
+                            }
+                        },
+                        isMuted = isGlobalMuted,
+                        onMuteToggle = { isGlobalMuted = !isGlobalMuted },
+                        onShareClick = {
+                            selectedVideoForMenu = video
+                            showMenuSheet = true
+                        },
+                        onMenuClick = {
+                            selectedVideoForMenu = video
+                            showMenuSheet = true
                         }
                     )
                 }
@@ -114,6 +154,42 @@ fun VideosScreen(
             }
         }
 
+        // --- VIDEO CATEGORIES FLOATING BELOW TOP BAR ---
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val categories = listOf("For You", "Trending", "Following", "New")
+            categories.forEach { category ->
+                val isSelected = selectedCategory == category
+                Column(
+                    modifier = Modifier
+                        .clickable { selectedCategory = category }
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = category,
+                        color = if (isSelected) Color(0xFFFF9500) else Color.LightGray,
+                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .height(2.5.dp)
+                            .width(28.dp)
+                            .background(if (isSelected) Color(0xFFFF9500) else Color.Transparent)
+                    )
+                }
+            }
+        }
+
         // FLOATING (+) UPLOAD OPTION
         FloatingActionButton(
             onClick = { showUploadDialog = true },
@@ -122,7 +198,7 @@ fun VideosScreen(
             shape = CircleShape,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 16.dp, end = 16.dp)
+                .padding(top = 74.dp, end = 16.dp) // adjusted for overlaying nicely with category row
                 .size(52.dp)
         ) {
             Icon(
@@ -142,8 +218,8 @@ fun VideosScreen(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 val secondsLeft = remember(wallet.videoProgress) {
-                    val remaining = 180f - wallet.videoProgress
-                    remaining.coerceIn(0f, 180f).toInt()
+                    val remaining = 60f - wallet.videoProgress
+                    remaining.coerceIn(0f, 60f).toInt()
                 }
 
                 Row(
@@ -152,68 +228,79 @@ fun VideosScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "⏱️ Watch & Earn (3m Cycle)",
+                        text = "⏱️ Watch & Earn (1m Chest Cycle)",
                         color = Color.LightGray,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Next Chest in ${secondsLeft}s",
-                        color = GoldCoins,
+                        text = if (pendingChestType != null) "🚨 TAP THE CHEST TO CLAIM!" else "Next Chest in ${secondsLeft}s",
+                        color = if (pendingChestType != null) Color(0xFFE74C3C) else GoldCoins,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Black
                     )
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(30.dp),
+                        .height(58.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     // Progress Track Line
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(bottom = 12.dp)
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp))
                             .background(Color(0xFF2C2C2C))
                     ) {
-                        val progressPct = (wallet.videoProgress / 180f).coerceIn(0f, 1f)
+                        val progressPct = (wallet.videoProgress / 60f).coerceIn(0f, 1f)
                         Box(
                             modifier = Modifier
                                 .fillMaxHeight()
                                 .fillMaxWidth(progressPct)
-                                .background(
-                                    androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                        colors = listOf(Color(0xFFFF9800), Color(0xFFFFD700))
-                                    )
-                                )
+                                .background(Color(0xFFF5A623)) // orange (#F5A623) fill
                         )
                     }
 
-                    // Milestone mini nodes for visual feedback
+                    // Milestone Custom Interactive Nodes for Chests
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight()
                     ) {
-                        MilestoneNodeSmall(
+                        // CHEST 1 — Wooden Chest at 20 second mark (bias = -0.333f)
+                        TimelineChestNode(
                             bias = -0.333f,
-                            isUnlocked = wallet.videoProgress >= 60f || wallet.claimedMin1,
-                            icon = "🪵"
+                            type = "wooden",
+                            isUnlocked = wallet.videoProgress >= 20f || wallet.claimedMin1,
+                            isPending = pendingChestType?.lowercase() == "wooden",
+                            countdownSeconds = pendingChestTimeLeft,
+                            onTap = { viewModel.claimPendingChest() }
                         )
-                        MilestoneNodeSmall(
+
+                        // CHEST 2 — Golden Chest at 40 second mark (bias = 0.333f)
+                        TimelineChestNode(
                             bias = 0.333f,
-                            isUnlocked = wallet.videoProgress >= 120f || wallet.claimedMin2,
-                            icon = "🏆"
+                            type = "golden",
+                            isUnlocked = wallet.videoProgress >= 40f || wallet.claimedMin2,
+                            isPending = pendingChestType?.lowercase() == "golden",
+                            countdownSeconds = pendingChestTimeLeft,
+                            onTap = { viewModel.claimPendingChest() }
                         )
-                        MilestoneNodeSmall(
+
+                        // CHEST 3 — Luxury/Diamond Chest at 60 second mark (bias = 1.0f)
+                        TimelineChestNode(
                             bias = 1.0f,
-                            isUnlocked = wallet.videoProgress >= 170f,
-                            icon = "👑"
+                            type = "luxury",
+                            isUnlocked = wallet.videoProgress >= 59.5f,
+                            isPending = pendingChestType?.lowercase() == "luxury",
+                            countdownSeconds = pendingChestTimeLeft,
+                            onTap = { viewModel.claimPendingChest() }
                         )
                     }
                 }
@@ -238,6 +325,120 @@ fun VideosScreen(
                 onClose = { viewModel.closeRewardPopup() }
             )
         }
+
+        // --- CUSTOM CLIPCLAPS MENU BOTTOM SHEET ---
+        if (showMenuSheet && selectedVideoForMenu != null) {
+            val video = selectedVideoForMenu!!
+            val context = LocalContext.current
+            
+            // Dim overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { showMenuSheet = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                        .background(Color(0xFF1E1E1E))
+                        .clickable(enabled = false) { }
+                        .padding(24.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .size(width = 40.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.DarkGray)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    Text(
+                        text = "Options for @${video.creator}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    
+                    HorizontalDivider(color = Color(0xFF2C2C2C), thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Option 1: Not Interested
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                android.widget.Toast.makeText(context, "We will recommend fewer videos like this!", android.widget.Toast.LENGTH_SHORT).show()
+                                showMenuSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🚫", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Not interested", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    // Option 2: Report Video
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                android.widget.Toast.makeText(context, "Thank you! We've received your report.", android.widget.Toast.LENGTH_SHORT).show()
+                                showMenuSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📢", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Report video", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    // Option 3: Copy Link
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("video_link", video.videoUrl)
+                                clipboard.setPrimaryClip(clip)
+                                android.widget.Toast.makeText(context, "Link copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                                showMenuSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🔗", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Copy link", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    // Option 4: Follow Creator
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                android.widget.Toast.makeText(context, "You are now following @${video.creator}!", android.widget.Toast.LENGTH_SHORT).show()
+                                showMenuSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("➕", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Follow @${video.creator}", color = Color.White, fontSize = 14.sp)
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
+        }
     }
 }
 
@@ -246,20 +447,25 @@ fun VideoShortsPlayerCard(
     video: VideoItem,
     isPlaying: Boolean,
     onPlayClick: () -> Unit,
-    onClapClick: () -> Unit
+    onClapClick: () -> Unit,
+    isMuted: Boolean,
+    onMuteToggle: () -> Unit,
+    onShareClick: () -> Unit,
+    onMenuClick: () -> Unit
 ) {
-    var isMuted by remember { mutableStateOf(false) }
     val avatarUrl = video.authorAvatar.ifEmpty { "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100" }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // Video playing container
+        // Upper section: The full width video player container with NO rounded corners
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
+                .background(Color.Black)
                 .clickable { onPlayClick() },
             contentAlignment = Alignment.Center
         ) {
@@ -295,190 +501,256 @@ fun VideoShortsPlayerCard(
                     )
                 }
             }
+
+            // Top-right semi-transparent mute controller
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 70.dp, end = 16.dp) // Clears headers nicely
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .clickable { onMuteToggle() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isMuted) "🔇" else "🔊",
+                    fontSize = 18.sp
+                )
+            }
         }
 
-        // Bottom dark shadow overlay for text legibility
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .align(Alignment.BottomCenter)
-                .background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
-                    )
-                )
-        )
-
-        // Bottom Left uploader meta & title details
+        // Below section: Crispy high-contrast white card containing creator uploader row + caption
         Column(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 16.dp, bottom = 90.dp, end = 90.dp) // padded beautifully
+                .fillMaxWidth()
+                .background(Color.White)
+                .padding(vertical = 12.dp, horizontal = 16.dp)
+                .padding(bottom = 98.dp) // Padded to leave clear space for reward indicator
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(avatarUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = "Avatar",
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.DarkGray)
-                        .border(1.5.dp, GoldCoins, CircleShape)
-                )
+                // Left profile row: Avatar circle (40dp) + username (bold, 14sp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(avatarUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Avatar",
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.LightGray)
+                    )
 
-                Column {
                     Text(
                         text = "@${video.creator}",
-                        color = Color.White,
+                        color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
-                    Text(
-                        text = "সরাসরি • Shorts Feed",
-                        color = Color.LightGray.copy(alpha = 0.8f),
-                        fontSize = 10.sp
-                    )
+                }
+
+                // Right actions row: 👏 Clap icon + clap count (with animation) + share (↗) + ••• menu
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Clap Trigger
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onClapClick() }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("👏", fontSize = 21.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        AnimatedContent(
+                            targetState = video.clapsCount,
+                            transitionSpec = {
+                                slideInVertically { height -> height } + fadeIn() togetherWith
+                                        slideOutVertically { height -> -height } + fadeOut()
+                            },
+                            label = "clapsCounter"
+                        ) { claps ->
+                            Text(
+                                text = claps.toString(),
+                                color = Color.Black,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    // Share ↗ action
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { onShareClick() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("↗", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // •• Menu button
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { onMenuClick() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("•••", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    }
                 }
             }
 
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Caption/title text below user row (gray, 13sp)
             Text(
                 text = video.title,
-                color = Color.White,
+                color = TextGrey,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
-
-        // Far-Right Action Icons Overlay column (TikTok layout)
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 100.dp), // safe space above bottom navigation bar
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // 1. Clap/Like Button
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x66000000))
-                        .clickable { onClapClick() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("👏", fontSize = 21.sp)
-                }
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = video.clapsCount.toString(),
-                    color = if (video.isLiked) GoldCoins else Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
-                )
-            }
-
-            // 2. Sound Control Widget (🔊 / 🔇)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x66000000))
-                        .clickable { isMuted = !isMuted },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (isMuted) "🔇" else "🔊",
-                        fontSize = 20.sp
-                    )
-                }
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = if (isMuted) "Unmute" else "Mute",
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            // 3. Share icon
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x66000000))
-                        .clickable { /* simulated share */ },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("↗", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = "শেয়ার",
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
     }
 }
 
 @Composable
-fun androidx.compose.foundation.layout.BoxScope.MilestoneNodeSmall(
+fun BoxScope.TimelineChestNode(
     bias: Float,
+    type: String, // "wooden", "golden", "luxury"
     isUnlocked: Boolean,
-    icon: String
+    isPending: Boolean,
+    countdownSeconds: Int,
+    onTap: () -> Unit
 ) {
+    // Collect animation values if pending
+    val scale = if (isPending) {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        val animatedScale by infiniteTransition.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse_scale"
+        )
+        animatedScale
+    } else {
+        1.0f
+    }
+
+    val chestColor = when (type) {
+        "wooden" -> Color(0xFF8B4513) // Brown `#8B4513`
+        "golden" -> Color(0xFFFFD700) // Gold `#FFD700`
+        "luxury" -> Color(0xFF9B59B6) // Purple `#9B59B6`
+        else -> Color.Gray
+    }
+
+    val chestIcon = when (type) {
+        "wooden" -> "🪵"
+        "golden" -> "🏆"
+        "luxury" -> "👑"
+        else -> "📦"
+    }
+
+    val labelText = when (type) {
+        "wooden" -> "WOODEN"
+        "golden" -> "GOLDEN"
+        "luxury" -> "PREMIUM"
+        else -> ""
+    }
+
     Box(
         modifier = Modifier
             .fillMaxHeight()
             .align(androidx.compose.ui.BiasAlignment(bias, 0f)),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(if (isUnlocked) 22.dp else 18.dp)
-                .clip(CircleShape)
-                .background(
-                    if (isUnlocked) {
-                        androidx.compose.ui.graphics.Brush.radialGradient(
-                            colors = listOf(Color(0xFFFF9800), Color(0xFFFFD700))
-                        )
-                    } else {
-                        androidx.compose.ui.graphics.Brush.radialGradient(
-                            colors = listOf(Color(0xFF2C2C2C), Color(0xFF1E1E1E))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Tap hint bubble
+            Box(modifier = Modifier.height(18.dp)) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isPending,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .offset(y = (-4).dp)
+                            .background(Color(0xFFE74C3C), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = "TAP! ${countdownSeconds}s",
+                            color = Color.White,
+                            fontSize = 7.5.sp,
+                            fontWeight = FontWeight.Black
                         )
                     }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(if (isPending) 32.dp else 24.dp)
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale
+                    )
+                    .clip(CircleShape)
+                    .background(
+                        if (isUnlocked || isPending) {
+                            androidx.compose.ui.graphics.Brush.radialGradient(
+                                colors = listOf(chestColor, Color.Black)
+                            )
+                        } else {
+                            androidx.compose.ui.graphics.Brush.radialGradient(
+                                colors = listOf(Color(0xFF222222), Color(0xFF111111))
+                            )
+                        }
+                    )
+                    .border(
+                        width = if (isPending) 2.dp else 1.dp,
+                        color = if (isPending) Color.White else if (isUnlocked) chestColor else Color(0xFF444444),
+                        shape = CircleShape
+                    )
+                    .clickable(enabled = isPending) {
+                        onTap()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = chestIcon,
+                    fontSize = if (isPending) 15.sp else 11.sp
                 )
-                .border(
-                    width = 1.dp,
-                    color = if (isUnlocked) Color(0xFFFFD700) else Color(0xFF4C4C4C),
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
+            }
+
+            Spacer(modifier = Modifier.height(2.dp))
+
             Text(
-                text = icon,
-                fontSize = if (isUnlocked) 11.sp else 9.sp
+                text = labelText,
+                color = if (isUnlocked || isPending) chestColor else Color.Gray,
+                fontSize = 7.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }

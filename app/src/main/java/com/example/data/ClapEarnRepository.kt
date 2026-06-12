@@ -14,8 +14,110 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class ClapEarnRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val database = AppDatabase.getDatabase(context)
     private val walletDao = database.userWalletDao()
+
+    // Video completion & fraud prevention helpers
+    fun isVideoCompleted(videoId: String): Boolean {
+        val prefs = appContext.getSharedPreferences("clapearn_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean("video_completed_$videoId", false)
+    }
+
+    fun markVideoCompleted(videoId: String) {
+        val prefs = appContext.getSharedPreferences("clapearn_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("video_completed_$videoId", true).apply()
+    }
+
+    // Save uncollected chest of type "wood", "gold", or "diamond" to Firestore "user_chests"
+    suspend fun saveUncollectedChestToFirestore(chestType: String, videoId: String) {
+        if (!isFirebaseAvailable) return
+        val auth = firebaseAuth ?: return
+        val db = firestore ?: return
+        val currentUser = auth.currentUser ?: return
+        
+        withContext(Dispatchers.IO) {
+            try {
+                val data = mapOf(
+                    "userId" to currentUser.uid,
+                    "chestType" to chestType, // "wood", "gold", "diamond"
+                    "earnedAt" to System.currentTimeMillis(),
+                    "videoId" to videoId,
+                    "isOpened" to false
+                )
+                db.collection("user_chests").add(data)
+                Log.d("ClapEarnRepository", "Uncollected chest of type $chestType stored in Firestore.")
+                
+                // Cleanup job: max 50 and older than 24h
+                cleanupOldChestsFirestore(currentUser.uid)
+            } catch (e: Exception) {
+                Log.e("ClapEarnRepository", "Failed to save chest to Firestore: ${e.message}")
+            }
+        }
+    }
+
+    private fun cleanupOldChestsFirestore(uid: String) {
+        val db = firestore ?: return
+        val cutoff = System.currentTimeMillis() - 86400000 // 24 hours ago
+        
+        db.collection("user_chests")
+            .whereEqualTo("userId", uid)
+            .get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot != null) {
+                    val documents = snapshot.documents
+                    // Delete expired or opened chests
+                    for (doc in documents) {
+                        val earnedAt = doc.getLong("earnedAt") ?: 0L
+                        val isOpened = doc.getBoolean("isOpened") ?: false
+                        if (earnedAt < cutoff || isOpened) {
+                            db.collection("user_chests").document(doc.id).delete()
+                        }
+                    }
+                    
+                    // Enforce max 50 count limit
+                    val remainingUnopened = documents.filter {
+                        val earnedAt = it.getLong("earnedAt") ?: 0L
+                        val isOpened = it.getBoolean("isOpened") ?: false
+                        earnedAt >= cutoff && !isOpened
+                    }.sortedBy { it.getLong("earnedAt") ?: 0L }
+                    
+                    if (remainingUnopened.size > 50) {
+                        val toDeleteCount = remainingUnopened.size - 50
+                        for (i in 0 until toDeleteCount) {
+                            db.collection("user_chests").document(remainingUnopened[i].id).delete()
+                        }
+                    }
+                }
+            }
+    }
+
+    // Mark matching chest as opened in Firestore
+    suspend fun markChestAsOpenedInFirestore(chestType: String) {
+        if (!isFirebaseAvailable) return
+        val auth = firebaseAuth ?: return
+        val db = firestore ?: return
+        val currentUser = auth.currentUser ?: return
+        
+        withContext(Dispatchers.IO) {
+            try {
+                db.collection("user_chests")
+                    .whereEqualTo("userId", currentUser.uid)
+                    .whereEqualTo("chestType", chestType)
+                    .whereEqualTo("isOpened", false)
+                    .limit(1)
+                    .get()
+                    .addOnSuccessListener { snapshot ->
+                        if (snapshot != null && !snapshot.isEmpty) {
+                            val docId = snapshot.documents[0].id
+                            db.collection("user_chests").document(docId).update("isOpened", true)
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.e("ClapEarnRepository", "Failed to mark chest as opened in Firestore: ${e.message}")
+            }
+        }
+    }
 
     // Firebase references with safe initialization checks
     private var firebaseAuth: FirebaseAuth? = null
@@ -219,6 +321,77 @@ class ClapEarnRepository(context: Context) {
         )
     }
 
+    suspend fun updateProgressDirectly(progress: Float) {
+        val current = getWalletDirect()
+        updateWallet(current.copy(videoProgress = progress))
+    }
+
+    suspend fun resetVideoProgressForNewVideo() {
+        val current = getWalletDirect()
+        updateWallet(current.copy(
+            videoProgress = 0.0f,
+            claimedMin1 = false,
+            claimedMin2 = false
+        ))
+    }
+
+    suspend fun setVideoProgressCompletedForCompletedVideo() {
+        val current = getWalletDirect()
+        updateWallet(current.copy(
+            videoProgress = 60.0f,
+            claimedMin1 = true,
+            claimedMin2 = true
+        ))
+    }
+
+    suspend fun claimVideoChest(type: String, videoId: String) {
+        val current = getWalletDirect()
+        var nextClaimedMin1 = current.claimedMin1
+        var nextClaimedMin2 = current.claimedMin2
+        var nextWooden = current.woodenChests
+        var nextGolden = current.goldenChests
+        var nextLuxury = current.luxuryChests
+        
+        val fType = when (type.lowercase()) {
+            "wooden", "wood" -> "wood"
+            "golden", "gold" -> "gold"
+            "luxury", "diamond" -> "diamond"
+            else -> type.lowercase()
+        }
+        
+        saveUncollectedChestToFirestore(fType, videoId)
+        
+        when (type.lowercase()) {
+            "wooden", "wood" -> {
+                nextClaimedMin1 = true
+                nextWooden += 1
+            }
+            "golden", "gold" -> {
+                nextClaimedMin2 = true
+                nextGolden += 1
+            }
+            "luxury", "diamond" -> {
+                nextLuxury += 1
+                markVideoCompleted(videoId)
+                updateWallet(current.copy(
+                    videoProgress = 60.0f, // cap at completion
+                    claimedMin1 = true,
+                    claimedMin2 = true,
+                    luxuryChests = nextLuxury
+                ))
+                return
+            }
+        }
+        
+        updateWallet(current.copy(
+            claimedMin1 = nextClaimedMin1,
+            claimedMin2 = nextClaimedMin2,
+            woodenChests = nextWooden,
+            goldenChests = nextGolden,
+            luxuryChests = nextLuxury
+        ))
+    }
+
     suspend fun updateVideoProgress(increment: Float): String? {
         val current = getWalletDirect()
         var newProgress = current.videoProgress + increment
@@ -230,17 +403,17 @@ class ClapEarnRepository(context: Context) {
         var nextGolden = current.goldenChests
         var nextLuxury = current.luxuryChests
         
-        if (newProgress >= 60.0f && !current.claimedMin1) {
+        if (newProgress >= 20.0f && !current.claimedMin1) {
             nextClaimedMin1 = true
             nextWooden += 1
             newlyUnlocked = "wooden"
         }
-        if (newProgress >= 120.0f && !current.claimedMin2) {
+        if (newProgress >= 40.0f && !current.claimedMin2) {
             nextClaimedMin2 = true
             nextGolden += 1
             newlyUnlocked = "golden"
         }
-        if (newProgress >= 180.0f) {
+        if (newProgress >= 60.0f) {
             nextLuxury += 1
             newlyUnlocked = "luxury"
             newProgress = 0.0f
@@ -264,16 +437,32 @@ class ClapEarnRepository(context: Context) {
         val current = getWalletDirect()
         if (current.woodenChests <= 0) return null
         
-        val coinsWon = (5..10).random().toLong()
+        markChestAsOpenedInFirestore("wood")
+        
+        val coinsWon = (3..7).random().toLong()
+        var cashWon = 0.0
+        var ticketsWon = 0
+        
+        val bonusRoll = (1..100).random()
+        if (bonusRoll <= 15) {
+            cashWon = 0.05
+        } else if (bonusRoll in 16..30) {
+            ticketsWon = 1
+        }
+        
         val nextWallet = current.copy(
             woodenChests = current.woodenChests - 1,
-            clapCoins = current.clapCoins + coinsWon
+            clapCoins = current.clapCoins + coinsWon,
+            cashUsd = current.cashUsd + cashWon,
+            raffleTickets = current.raffleTickets + ticketsWon
         )
         updateWallet(nextWallet)
         
         return mapOf(
             "chestType" to "Wooden",
-            "coins" to coinsWon
+            "coins" to coinsWon,
+            "cash" to cashWon,
+            "tickets" to ticketsWon
         )
     }
 
@@ -281,16 +470,32 @@ class ClapEarnRepository(context: Context) {
         val current = getWalletDirect()
         if (current.goldenChests <= 0) return null
         
-        val coinsWon = (10..20).random().toLong()
+        markChestAsOpenedInFirestore("gold")
+        
+        val coinsWon = (8..15).random().toLong()
+        var cashWon = 0.0
+        var ticketsWon = 0
+        
+        val bonusRoll = (1..100).random()
+        if (bonusRoll <= 20) {
+            cashWon = 0.10
+        } else if (bonusRoll in 21..40) {
+            ticketsWon = 2
+        }
+        
         val nextWallet = current.copy(
             goldenChests = current.goldenChests - 1,
-            clapCoins = current.clapCoins + coinsWon
+            clapCoins = current.clapCoins + coinsWon,
+            cashUsd = current.cashUsd + cashWon,
+            raffleTickets = current.raffleTickets + ticketsWon
         )
         updateWallet(nextWallet)
         
         return mapOf(
             "chestType" to "Golden",
-            "coins" to coinsWon
+            "coins" to coinsWon,
+            "cash" to cashWon,
+            "tickets" to ticketsWon
         )
     }
 
@@ -298,16 +503,32 @@ class ClapEarnRepository(context: Context) {
         val current = getWalletDirect()
         if (current.luxuryChests <= 0) return null
         
-        val coinsWon = (20..50).random().toLong()
+        markChestAsOpenedInFirestore("diamond")
+        
+        val coinsWon = (15..30).random().toLong()
+        var cashWon = 0.0
+        var ticketsWon = 0
+        
+        val bonusRoll = (1..100).random()
+        if (bonusRoll <= 25) {
+            cashWon = 0.20
+        } else if (bonusRoll in 26..50) {
+            ticketsWon = 3
+        }
+        
         val nextWallet = current.copy(
             luxuryChests = current.luxuryChests - 1,
-            clapCoins = current.clapCoins + coinsWon
+            clapCoins = current.clapCoins + coinsWon,
+            cashUsd = current.cashUsd + cashWon,
+            raffleTickets = current.raffleTickets + ticketsWon
         )
         updateWallet(nextWallet)
         
         return mapOf(
             "chestType" to "Luxury",
-            "coins" to coinsWon
+            "coins" to coinsWon,
+            "cash" to cashWon,
+            "tickets" to ticketsWon
         )
     }
 

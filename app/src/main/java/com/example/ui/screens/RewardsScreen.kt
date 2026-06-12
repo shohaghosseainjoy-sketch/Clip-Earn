@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -91,6 +92,46 @@ fun RewardsScreen(
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // ---- "MY CHESTS" Section ----
+                val totalChestsAvailable = wallet.woodenChests + wallet.goldenChests + wallet.luxuryChests
+                if (totalChestsAvailable > 0) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "💼 MY CHESTS",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.Black,
+                            modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp)
+                        )
+                        
+                        if (wallet.woodenChests > 0) {
+                            MyChestCard(
+                                type = "wooden",
+                                count = wallet.woodenChests,
+                                onOpen = { viewModel.openRewardChest("wooden") }
+                            )
+                        }
+                        if (wallet.goldenChests > 0) {
+                            MyChestCard(
+                                type = "golden",
+                                count = wallet.goldenChests,
+                                onOpen = { viewModel.openRewardChest("golden") }
+                            )
+                        }
+                        if (wallet.luxuryChests > 0) {
+                            MyChestCard(
+                                type = "luxury",
+                                count = wallet.luxuryChests,
+                                onOpen = { viewModel.openRewardChest("luxury") }
+                            )
+                        }
+                    }
+                }
+
                 // ---- REWARD CHESTS PANEL ----
                 Card(
                     modifier = Modifier
@@ -338,8 +379,10 @@ fun RewardsScreen(
             val pieces = result["amazonPieces"] as? Int ?: 0
             val prizeType = result["prizeType"] as? String
             val prizeValue = result["prizeValue"] as? String
+            val chestType = result["chestType"] as? String
 
             ChestResultClaimOverlay(
+                chestType = chestType,
                 coins = coins,
                 tickets = tickets,
                 cash = cash,
@@ -1292,6 +1335,7 @@ fun FloatingCoinAnimation() {
 
 @Composable
 fun ChestResultClaimOverlay(
+    chestType: String? = "Wooden",
     coins: Long,
     tickets: Int,
     cash: Double,
@@ -1321,85 +1365,262 @@ fun ChestResultClaimOverlay(
         } catch (e: Exception) {}
     }
 
+    var animationPhase by remember { mutableStateOf(0) } // 0: Closed bouncing, 1: Chest burst & light rays, 2: Cards flying, 3: Settled show all
+
+    LaunchedEffect(Unit) {
+        delay(1000)
+        animationPhase = 1
+        delay(600)
+        animationPhase = 2
+        delay(800)
+        animationPhase = 3
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "rays")
+    val rotationAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(8000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+
+    // Bounce infinite animation for phase 0
+    val bounceY by animateFloatAsState(
+        targetValue = if (animationPhase == 0) -25f else 0f,
+        animationSpec = if (animationPhase == 0) {
+            infiniteRepeatable(
+                animation = tween(250, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            )
+        } else {
+            tween(150)
+        },
+        label = "bounceY"
+    )
+
+    // Scale animation of chest as it pops open
+    val chestScale by animateFloatAsState(
+        targetValue = when (animationPhase) {
+            0 -> 1.0f
+            1 -> 1.4f
+            else -> 0.8f
+        },
+        animationSpec = tween(300, easing = FastOutSlowInEasing),
+        label = "chestScale"
+    )
+
+    val chestEmoji = when (chestType?.lowercase()) {
+        "wooden", "wood" -> "🪵📦"
+        "golden", "gold" -> "🏆🎁"
+        "luxury", "diamond" -> "👑💎"
+        else -> "📦"
+    }
+
+    val chestLabel = when (chestType?.lowercase()) {
+        "wooden", "wood" -> "Wooden Chest"
+        "golden", "gold" -> "Golden Chest"
+        "luxury", "diamond" -> "Diamond Chest"
+        else -> chestType ?: "Treasure Chest"
+    }
+
+    val cardColor = when (chestType?.lowercase()) {
+        "wooden", "wood" -> Color(0xFF8B4513)
+        "golden", "gold" -> Color(0xFFD4AF37)
+        "luxury", "diamond" -> Color(0xFF9B59B6)
+        else -> OrangeClaps
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.85f))
+            .background(Color.Black.copy(alpha = 0.9f))
             .clickable { onClaim() },
         contentAlignment = Alignment.Center
     ) {
-        FloatingCoinAnimation()
+        // Rotating sunburst background
+        Canvas(
+            modifier = Modifier
+                .size(360.dp)
+                .graphicsLayer { rotationZ = rotationAngle }
+        ) {
+            val rayCount = 12
+            val angleStep = 360f / rayCount
+            for (i in 0 until rayCount) {
+                drawArc(
+                    color = Color(0xFFFFD700).copy(alpha = 0.15f),
+                    startAngle = i * angleStep,
+                    sweepAngle = angleStep / 2,
+                    useCenter = true
+                )
+            }
+        }
 
-        Card(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp)
-                .clickable(enabled = false) {},
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
+            // Chest representation
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .graphicsLayer {
+                        translationY = bounceY
+                        scaleX = chestScale
+                        scaleY = chestScale
+                    }
+                    .size(120.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "🔓 CHEST OPENED!",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 20.sp,
-                    color = OrangeClaps,
-                    textAlign = TextAlign.Center
+                    text = if (animationPhase == 0) chestEmoji else "🔓✨",
+                    fontSize = 72.sp
                 )
+            }
 
-                Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
+            // Text indicators
+            androidx.compose.animation.AnimatedVisibility(
+                visible = animationPhase >= 1,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn()
+            ) {
                 Text(
-                    text = "You found the following rewards inside:",
-                    fontSize = 12.sp,
-                    color = Color.Gray,
+                    text = "$chestLabel Opened!",
+                    color = Color.White,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 24.sp,
+                    letterSpacing = 1.sp,
                     textAlign = TextAlign.Center
                 )
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-                // Display won resources in linear fashion
+            // Flyout reward cards (Phase 2 & 3)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = animationPhase >= 2,
+                enter = androidx.compose.animation.scaleIn(animationSpec = tween(500, easing = FastOutSlowInEasing)) + androidx.compose.animation.fadeIn()
+            ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (coins > 0) {
-                        ChestResultRow(emoji = "🟡", title = "ClapCoins", value = "+$coins")
-                    }
-                    if (tickets > 0) {
-                        ChestResultRow(emoji = "🎟️", title = "Raffle Tickets", value = "+$tickets")
-                    }
-                    if (cash > 0) {
-                        ChestResultRow(emoji = "💚", title = "Cash USD", value = String.format("+$%.2f", cash))
-                    }
-                    if (pieces > 0) {
-                        ChestResultRow(emoji = "🛍️", title = "Amazon Pieces", value = "+$pieces")
-                    }
-                    if (prizeType != null && prizeValue != null) {
-                        ChestResultRow(emoji = "✨💎", title = prizeType, value = prizeValue)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = onClaim,
-                    colors = ButtonDefaults.buttonColors(containerColor = OrangeClaps),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "CLAIM ALL REWARDS",
-                        color = Color.White,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 13.sp
+                        text = "You Obtained:",
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
                     )
+
+                    // Yellow Coin card flyer
+                    Card(
+                        modifier = Modifier
+                            .width(180.dp)
+                            .padding(8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9C4)), // Yellow card
+                        border = BorderStroke(2.dp, Color(0xFFFFD54F))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("🟡", fontSize = 42.sp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "+$coins Coins",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                color = Color(0xFFE65100)
+                            )
+                        }
+                    }
+
+                    // Bonus indicators
+                    if (cash > 0.0 || tickets > 0) {
+                        Text(
+                            text = "✨ PLUS BONUSES! ✨",
+                            color = Color(0xFF81C784),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (cash > 0.0) {
+                                Card(
+                                    modifier = Modifier.padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)), // Green cash card
+                                    border = BorderStroke(1.5.dp, Color(0xFF81C784))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("💵", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = String.format("+$%.2f Cash", cash),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = Color(0xFF2E7D32)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (tickets > 0) {
+                                Card(
+                                    modifier = Modifier.padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE1F5FE)), // Blue ticket card
+                                    border = BorderStroke(1.5.dp, Color(0xFF4FC3F7))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("🎟️", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "+$tickets Tickets",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = Color(0xFF0277BD)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+
+            Spacer(modifier = Modifier.height(30.dp))
+
+            Button(
+                onClick = onClaim,
+                colors = ButtonDefaults.buttonColors(containerColor = cardColor),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .padding(horizontal = 32.dp)
+            ) {
+                Text(
+                    text = "CLAIM ALL",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    color = if (chestEmoji == "🏆🎁") Color.Black else Color.White
+                )
             }
         }
     }
@@ -1436,5 +1657,108 @@ fun ChestResultRow(
             fontSize = 14.sp,
             color = CashGreen
         )
+    }
+}
+
+@Composable
+fun MyChestCard(
+    type: String, // "wooden", "golden", "luxury"
+    count: Int,
+    onOpen: () -> Unit
+) {
+    val cardColor = when (type) {
+        "wooden" -> Color(0xFF8B4513)
+        "golden" -> Color(0xFFD4AF37) // darker gold #D4AF37 for text contrast
+        "luxury" -> Color(0xFF9B59B6)
+        else -> Color.Gray
+    }
+    
+    val displayName = when (type) {
+        "wooden" -> "Chest"
+        "golden" -> "Gold Chest"
+        "luxury" -> "Diamond Chest"
+        else -> "Chest"
+    }
+    
+    val badgeName = when (type) {
+        "wooden" -> "Wooden Chest"
+        "golden" -> "Golden Chest"
+        "luxury" -> "Diamond Chest"
+        else -> "Chest"
+    }
+
+    val chestIllustration = when (type) {
+        "wooden" -> "🪵📦"
+        "golden" -> "🏆🎁"
+        "luxury" -> "👑💎"
+        else -> "📦"
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = cardColor.copy(alpha = 0.08f)),
+        border = BorderStroke(1.5.dp, cardColor.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Chest Illustration
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .background(cardColor.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = chestIllustration, fontSize = 26.sp)
+                }
+                
+                Spacer(modifier = Modifier.width(14.dp))
+                
+                Column {
+                    Text(
+                        text = displayName,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Black,
+                        color = cardColor
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(cardColor, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (count > 1) "x$count $badgeName" else badgeName,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+            
+            Button(
+                onClick = onOpen,
+                colors = ButtonDefaults.buttonColors(containerColor = cardColor),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "TAP TO OPEN",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 10.sp,
+                    color = if (type == "golden") Color.Black else Color.White
+                )
+            }
+        }
     }
 }

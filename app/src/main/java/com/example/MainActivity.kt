@@ -6,9 +6,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,8 +83,18 @@ fun ClapEarnAppContent(viewModel: ClapEarnViewModel) {
                 coinCount = wallet.clapCoins,
                 ticketCount = wallet.raffleTickets,
                 cashUsd = wallet.cashUsd,
+                unclaimedChests = wallet.unclaimedChests,
+                woodenChests = wallet.woodenChests,
+                goldenChests = wallet.goldenChests,
+                luxuryChests = wallet.luxuryChests,
                 onAddCoinsClick = {
-                    // Click [+] gives a quick demo bonus of 1000 ClapCoins & 2 tickets!
+                    navController.navigate("games") {
+                        popUpTo(navController.graph.startDestinationId) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
                     viewModel.grantQuickCoinsBonus()
                 }
             )
@@ -129,99 +144,165 @@ fun ClapEarnTopBar(
     coinCount: Long,
     ticketCount: Int,
     cashUsd: Double,
+    unclaimedChests: Int = 0,
+    woodenChests: Int = 0,
+    goldenChests: Int = 0,
+    luxuryChests: Int = 0,
     onAddCoinsClick: () -> Unit
 ) {
-    // Exact specification layout:
-    // Left side: 🟡 [coin count] [+] 🎰 [raffle ticket count]
-    // Right side: 💚 [0.00 USD]
-    // Black background, white/colored text
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .background(ClipClapBlack)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+    // Collect/remember counts to check if a chest/ticket has been earned
+    var lastTicketCount by remember { mutableStateOf(ticketCount) }
+    var lastChestCount by remember { mutableStateOf(unclaimedChests + woodenChests + goldenChests + luxuryChests) }
+    
+    val shakeAnimatable = remember { Animatable(0f) }
+    
+    LaunchedEffect(ticketCount, unclaimedChests, woodenChests, goldenChests, luxuryChests) {
+        val currentChestCount = unclaimedChests + woodenChests + goldenChests + luxuryChests
+        if (ticketCount > lastTicketCount || currentChestCount > lastChestCount) {
+            // Trigger beautiful shake animation
+            for (i in 0..3) {
+                shakeAnimatable.animateTo(12f, animationSpec = tween(50, easing = LinearEasing))
+                shakeAnimatable.animateTo(-12f, animationSpec = tween(50, easing = LinearEasing))
+            }
+            shakeAnimatable.animateTo(0f, animationSpec = tween(50, easing = LinearEasing))
+        }
+        lastTicketCount = ticketCount
+        lastChestCount = currentChestCount
+    }
+
+    Surface(
+        color = Color(0xFF000000), // Pure Black Background
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(48.dp)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Left Side: Coins and Tickets
+            // Left Side: Coin count badge, plus button, poker-chip style ticket count
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Coins Chip: #F5A623 background
+                // 1. 🟡 Coin icon (orange circle) + coin count number (white text)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(GoldCoins)
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text(text = "🟡", fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = coinCount.toString(),
-                        color = Color.Black,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 13.sp
-                    )
-
-                    // Plus [+] button on Chip
-                    Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(24.dp)
                             .clip(CircleShape)
-                            .background(Color.Black)
-                            .clickable { onAddCoinsClick() },
+                            .background(Color(0xFFFF9500)), // Orange circle background
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Quick Coins",
-                            tint = GoldCoins,
-                            modifier = Modifier.size(12.dp)
+                        Text(text = "🪙", fontSize = 13.sp)
+                    }
+
+                    // Count Flip Animation
+                    AnimatedContent(
+                        targetState = coinCount,
+                        transitionSpec = {
+                            slideInVertically { height -> height } + fadeIn() togetherWith
+                                    slideOutVertically { height -> -height } + fadeOut()
+                        },
+                        label = "coinCountAnimation"
+                    ) { count ->
+                        Text(
+                            text = count.toString(),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
                         )
                     }
                 }
 
-                // Raffle slot count chip: Black/Dark with icon
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                // 2. [+] plus button (tap = go to earn more screen)
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF222222))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF9500))
+                        .clickable { onAddCoinsClick() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "🎰", fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Earn More",
+                        tint = Color.White,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(2.dp))
+
+                // 3. 🎰 Raffle ticket icon (poker chip style) + ticket count number [SHAKING]
+                Row(
+                    modifier = Modifier.graphicsLayer {
+                        rotationZ = shakeAnimatable.value
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    // Poker chip style ticket icon (Double-ring blue/red style)
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE74C3C)), // Beautiful red chip outer circle
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(Color.Transparent)
+                                .border(1.2.dp, Color.White, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🎟️", fontSize = 10.sp)
+                        }
+                    }
+
+                    // Ticket count number (white text)
                     Text(
-                        text = "$ticketCount Tickets",
+                        text = ticketCount.toString(),
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 14.sp
                     )
                 }
             }
 
-            // Right side: Cash Chip Green (#2ECC71)
+            // Right side: 💚 Dollar icon (green) + "0.00 USD" text (white)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(CashGreen)
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(text = "💚", fontSize = 14.sp)
-                Spacer(modifier = Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF2ECC71)), // Green Dollar circle
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "$",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+
                 Text(
-                    text = "$${String.format("%.2f", cashUsd)} USD",
+                    text = String.format("$%.2f USD", cashUsd),
                     color = Color.White,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 12.sp
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
                 )
             }
         }
