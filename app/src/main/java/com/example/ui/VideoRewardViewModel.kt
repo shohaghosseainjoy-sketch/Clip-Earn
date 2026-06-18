@@ -61,12 +61,17 @@ class VideoRewardViewModel(application: Application) : AndroidViewModel(applicat
             while (_isVideoPlaying.value) {
                 delay(1000L)
                 val current = _progressSeconds.value
+                
+                // Track total watch time in background sync
+                viewModelScope.launch { repository.incrementTotalWatchTime() }
+
                 if (current < 60) {
                     val next = current + 1
                     _progressSeconds.value = next
                     checkAndTriggerHaptic(next)
                 } else {
                     // Reset cycle immediately when 60 seconds completes
+                    viewModelScope.launch { repository.grantOneMinuteWatchReward() }
                     resetCycle()
                 }
             }

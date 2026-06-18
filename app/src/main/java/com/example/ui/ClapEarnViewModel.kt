@@ -23,6 +23,8 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     private val _wallet = MutableStateFlow(UserWallet())
     val wallet: StateFlow<UserWallet> = _wallet.asStateFlow()
 
+    val transactionHistory = repository.transactionHistory
+
     private val _isFirebaseAvailable = MutableStateFlow(repository.isFirebaseAvailable)
     val isFirebaseAvailable: StateFlow<Boolean> = _isFirebaseAvailable.asStateFlow()
 
@@ -124,6 +126,13 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     private var videoProgressJob: Job? = null
 
     init {
+        // Observe popups emitted from repository functions
+        viewModelScope.launch {
+            repository.rewardPopups.collect { popup ->
+                _completedRewardPopup.value = popup
+            }
+        }
+
         // Load initial wallet
         viewModelScope.launch {
             repository.currentWallet.collectLatest {

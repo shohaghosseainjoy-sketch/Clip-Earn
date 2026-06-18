@@ -113,11 +113,27 @@ fun ClapEarnAppContent(viewModel: ClapEarnViewModel) {
     
     var currentRoute by remember { mutableStateOf("videos") }
 
+    var showWalletOverlay by remember { mutableStateOf(false) }
+    val transactions by viewModel.transactionHistory.collectAsState(initial = emptyList())
+
     // Track active navigation routing
     LaunchedEffect(navController) {
         navController.addOnDestinationChangedListener { _, destination, _ ->
             currentRoute = destination.route ?: "videos"
         }
+    }
+
+    if (showWalletOverlay) {
+        com.example.ui.components.WalletOverlay(
+            clapCoins = wallet.clapCoins,
+            cashUsd = wallet.cashUsd,
+            transactions = transactions,
+            onDismiss = { showWalletOverlay = false },
+            onWithdrawClick = { 
+                showWalletOverlay = false
+                navController.navigate("me")
+            }
+        )
     }
 
     Scaffold(
@@ -140,6 +156,9 @@ fun ClapEarnAppContent(viewModel: ClapEarnViewModel) {
                         restoreState = true
                     }
                     viewModel.grantQuickCoinsBonus()
+                },
+                onWalletClick = {
+                    showWalletOverlay = true
                 }
             )
         },
@@ -192,13 +211,16 @@ fun ClapEarnTopBar(
     woodenChests: Int = 0,
     goldenChests: Int = 0,
     luxuryChests: Int = 0,
-    onAddCoinsClick: () -> Unit
+    onAddCoinsClick: () -> Unit,
+    onWalletClick: () -> Unit
 ) {
     // Collect/remember counts to check if a chest/ticket has been earned
     var lastTicketCount by remember { mutableStateOf(ticketCount) }
     var lastChestCount by remember { mutableStateOf(unclaimedChests + woodenChests + goldenChests + luxuryChests) }
+    var lastCoinCount by remember { mutableStateOf(coinCount) }
     
     val shakeAnimatable = remember { Animatable(0f) }
+    val coinScaleAnimatable = remember { Animatable(1f) }
     
     LaunchedEffect(ticketCount, unclaimedChests, woodenChests, goldenChests, luxuryChests) {
         val currentChestCount = unclaimedChests + woodenChests + goldenChests + luxuryChests
@@ -212,6 +234,14 @@ fun ClapEarnTopBar(
         }
         lastTicketCount = ticketCount
         lastChestCount = currentChestCount
+    }
+    
+    LaunchedEffect(coinCount) {
+        if (coinCount > lastCoinCount) {
+            coinScaleAnimatable.animateTo(1.3f, animationSpec = tween(150))
+            coinScaleAnimatable.animateTo(1f, animationSpec = tween(150))
+        }
+        lastCoinCount = coinCount
     }
 
     Surface(
@@ -235,7 +265,11 @@ fun ClapEarnTopBar(
                 // 1. 🟡 Coin icon (orange circle) + coin count number (white text)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = coinScaleAnimatable.value
+                        scaleY = coinScaleAnimatable.value
+                    }
                 ) {
                     Box(
                         modifier = Modifier
@@ -325,7 +359,11 @@ fun ClapEarnTopBar(
             // Right side: 💚 Dollar icon (green) + "0.00 USD" text (white)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onWalletClick() }
+                    .padding(4.dp)
             ) {
                 Box(
                     modifier = Modifier

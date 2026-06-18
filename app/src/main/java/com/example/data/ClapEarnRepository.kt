@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -17,6 +18,43 @@ class ClapEarnRepository(context: Context) {
     private val appContext = context.applicationContext
     private val database = AppDatabase.getDatabase(context)
     private val walletDao = database.userWalletDao()
+    private val transactionDao = database.transactionDao()
+
+    private val _rewardPopups = kotlinx.coroutines.flow.MutableSharedFlow<com.example.ui.RewardPopupData>(extraBufferCapacity = 1)
+    val rewardPopups = _rewardPopups.asSharedFlow()
+
+    val transactionHistory: Flow<List<TransactionLog>> = transactionDao.getAllTransactions()
+
+    // Added Logic for Total Watch time & Minute Rewards
+    private var localWatchSecondsAcc = 0L
+    suspend fun incrementTotalWatchTime() {
+        localWatchSecondsAcc++
+        if (localWatchSecondsAcc >= 10) { // save to db every 10 seconds to avoid spam
+            val current = getWalletDirect()
+            updateWallet(current.copy(totalWatchTimeSeconds = current.totalWatchTimeSeconds + localWatchSecondsAcc))
+            localWatchSecondsAcc = 0L
+        }
+    }
+
+    suspend fun grantOneMinuteWatchReward() {
+        val current = getWalletDirect()
+        val randomBonus = (5..50).random().toLong()
+        val totalReward = 10L + randomBonus
+        
+        updateWallet(current.copy(clapCoins = current.clapCoins + totalReward))
+        
+        _rewardPopups.tryEmit(
+            com.example.ui.RewardPopupData(
+                coins = totalReward.toInt()
+            )
+        )
+    }
+
+    suspend fun addTransaction(title: String, amount: Long, isCredit: Boolean) {
+        transactionDao.insertTransaction(
+            TransactionLog(title = title, amount = amount, isCredit = isCredit)
+        )
+    }
 
     // Video completion & fraud prevention helpers
     fun isVideoCompleted(videoId: String): Boolean {
@@ -168,6 +206,17 @@ class ClapEarnRepository(context: Context) {
     // Updates wallet locally and syncs to firestore if online
     suspend fun updateWallet(wallet: UserWallet) {
         withContext(Dispatchers.IO) {
+            val oldWallet = walletDao.getWallet() ?: UserWallet()
+            
+            val coinDiff = wallet.clapCoins - oldWallet.clapCoins
+            val usdDiff = wallet.cashUsd - oldWallet.cashUsd
+            
+            if (coinDiff > 0) addTransaction("Earned Coins", coinDiff, true)
+            else if (coinDiff < 0) addTransaction("Spent Coins", -coinDiff, false)
+            
+            if (usdDiff > 0) addTransaction("Earned Cash", (usdDiff * 100).toLong(), true)
+            else if (usdDiff < 0) addTransaction("Spent Cash", (-usdDiff * 100).toLong(), false)
+
             walletDao.updateWallet(wallet)
             syncToFirestore(wallet)
         }
@@ -193,6 +242,7 @@ class ClapEarnRepository(context: Context) {
                     "referralCode" to wallet.referralCode,
                     "hasRedeemedCode" to wallet.hasRedeemedCode,
                     "streakDays" to wallet.streakDays,
+                    "totalWatchTimeSeconds" to wallet.totalWatchTimeSeconds,
                     "totalClapsGiven" to wallet.totalClapsGiven,
                     "amazonPieces" to wallet.amazonPieces,
                     "diamondChests" to wallet.diamondChests,
@@ -234,6 +284,7 @@ class ClapEarnRepository(context: Context) {
                                 referralCode = document.getString("referralCode") ?: "FREE7788",
                                 hasRedeemedCode = document.getBoolean("hasRedeemedCode") ?: false,
                                 streakDays = document.getLong("streakDays")?.toInt() ?: 5,
+                                totalWatchTimeSeconds = document.getLong("totalWatchTimeSeconds") ?: 0L,
                                 totalClapsGiven = document.getLong("totalClapsGiven")?.toInt() ?: 142,
                                 amazonPieces = document.getLong("amazonPieces")?.toInt() ?: 16,
                                 diamondChests = document.getLong("diamondChests")?.toInt() ?: 2,
