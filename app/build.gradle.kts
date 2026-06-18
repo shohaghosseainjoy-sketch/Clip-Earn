@@ -1,3 +1,13 @@
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.Properties
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.TaskAction
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -5,6 +15,15 @@ plugins {
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
 }
+
+val versionPropsFile = file("version.properties")
+val versionProps = Properties()
+if (versionPropsFile.exists()) {
+  FileInputStream(versionPropsFile).use { versionProps.load(it) }
+}
+
+val vCode = (versionProps["VERSION_CODE"] ?: "1").toString().toInt()
+val vName = (versionProps["VERSION_NAME"] ?: "1.0.0").toString()
 
 android {
   namespace = "com.example"
@@ -14,8 +33,8 @@ android {
     applicationId = "com.aistudio.clapearn.mvtwyz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = vCode
+    versionName = vName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -122,4 +141,48 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
+  implementation(libs.firebase.messaging)
+}
+
+abstract class IncrementVersionTask : DefaultTask() {
+  @get:InputFile
+  abstract val versionFile: RegularFileProperty
+
+  @get:OutputFile
+  abstract val versionFileOut: RegularFileProperty
+
+  @TaskAction
+  fun run() {
+    val file = versionFile.get().asFile
+    val props = Properties()
+    if (file.exists()) {
+      FileInputStream(file).use { props.load(it) }
+    }
+    val currentCode = (props["VERSION_CODE"] ?: "1").toString().toInt()
+    props["VERSION_CODE"] = (currentCode + 1).toString()
+    FileOutputStream(file).use { props.store(it, null) }
+  }
+}
+
+abstract class PrintVersionNameTask : DefaultTask() {
+  @get:Input
+  abstract val versionName: Property<String>
+
+  @TaskAction
+  fun run() {
+    println(versionName.get())
+  }
+}
+
+tasks.register<IncrementVersionTask>("incrementVersion") {
+  versionFile.set(layout.projectDirectory.file("version.properties"))
+  versionFileOut.set(layout.projectDirectory.file("version.properties"))
+}
+
+tasks.register<PrintVersionNameTask>("printVersionName") {
+  versionName.set(vName)
+}
+
+tasks.named("preBuild") {
+  dependsOn("incrementVersion")
 }

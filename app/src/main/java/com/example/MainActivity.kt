@@ -50,14 +50,58 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ClapEarnViewModel by viewModels()
+    private var hasCheckedUpdate = false
+    private val updateInfoState = androidx.compose.runtime.mutableStateOf<UpdateInfo?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Subscribe all users to topic for FCM updates
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().subscribeToTopic("all_users")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         setContent {
             MyApplicationTheme {
                 ClapEarnAppContent(viewModel = viewModel)
+                updateInfoState.value?.let { info ->
+                    UpdateDialog(updateInfo = info, onDismiss = { updateInfoState.value = null })
+                }
             }
+        }
+
+        checkForAppUpdates()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!hasCheckedUpdate) {
+            checkForAppUpdates()
+        }
+    }
+
+    private fun checkForAppUpdates() {
+        try {
+            val prefs = getSharedPreferences("app_update_prefs", MODE_PRIVATE)
+            val lastReminded = prefs.getLong("remind_later_time", 0L)
+            val currentVersionCode = BuildConfig.VERSION_CODE
+            val updateChecker = UpdateChecker(this, currentVersionCode)
+
+            updateChecker.checkForUpdate { updateInfo ->
+                runOnUiThread {
+                    hasCheckedUpdate = true
+                    if (updateInfo.forceUpdate) {
+                        updateInfoState.value = updateInfo
+                    } else if (System.currentTimeMillis() - lastReminded >= 24 * 60 * 60 * 1000L) {
+                        updateInfoState.value = updateInfo
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to check for updates: ${e.message}")
         }
     }
 }

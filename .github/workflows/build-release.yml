@@ -1,0 +1,67 @@
+name: Build and Release ClapEarn
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+        
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > app/keystore.jks
+          
+      - name: Build Release APK
+        run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          
+      - name: Get Version Name
+        id: version
+        run: |
+          VERSION=$(./gradlew -q printVersionName)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: ClapEarn v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          
+      - name: Upload APK to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: app/build/outputs/apk/release/app-release.apk
+          asset_name: clapearn-v${{ steps.version.outputs.version }}.apk
+          asset_content_type: application/vnd.android.package-archive
+          
+      - name: Update Firestore Version Info
+        run: |
+          pip install firebase-admin
+          python3 update_firestore_version.py
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+          APK_URL: ${{ steps.create_release.outputs.html_url }}

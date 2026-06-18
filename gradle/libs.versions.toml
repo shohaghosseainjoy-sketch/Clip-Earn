@@ -89,6 +89,7 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai" }
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version = "21.2.0" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version = "1.3.1" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version = "1.3.1" }
