@@ -93,6 +93,7 @@ fun MeScreen(
                     referralCode = wallet.referralCode,
                     hasRedeemedCode = wallet.hasRedeemedCode,
                     isFirebaseEnabled = isFirebaseAvailable,
+                    streakDays = wallet.streakDays,
                     avatarEmoji = avatarEmojis[avatarIndex],
                     avatarBgColor = avatarColors[avatarIndex],
                     onNavigateTo = { route -> currentSubRoute = route },
@@ -101,6 +102,9 @@ fun MeScreen(
                     },
                     onTriggerSignIn = {
                         viewModel.simulateGoogleSignIn { }
+                    },
+                    onDailyCheckIn = {
+                        viewModel.claimDailyCheckIn()
                     }
                 )
             }
@@ -183,11 +187,13 @@ fun ProfileHomeScreen(
     referralCode: String,
     hasRedeemedCode: Boolean,
     isFirebaseEnabled: Boolean,
+    streakDays: Int,
     avatarEmoji: String,
     avatarBgColor: Color,
     onNavigateTo: (MeSubRoute) -> Unit,
     onRedeemCodeSubmit: (String, (String) -> Unit) -> Unit,
-    onTriggerSignIn: () -> Unit
+    onTriggerSignIn: () -> Unit,
+    onDailyCheckIn: () -> Unit
 ) {
     var redeemInput by remember { mutableStateOf(TextFieldValue("")) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
@@ -345,6 +351,52 @@ fun ProfileHomeScreen(
                         modifier = Modifier.align(Alignment.End)
                     )
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // DAILY CHECK-IN SECTION
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .clickable { onDailyCheckIn() },
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDF4)),
+            border = BorderStroke(1.dp, CashGreen)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "📅", fontSize = 28.sp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Daily Check-in",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.Black
+                        )
+                        Text(
+                            text = "Current Streak: $streakDays Days 🔥",
+                            fontSize = 12.sp,
+                            color = CashGreen,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowRight,
+                    contentDescription = "Check in Arrow",
+                    tint = CashGreen,
+                    modifier = Modifier.size(28.dp)
+                )
             }
         }
 

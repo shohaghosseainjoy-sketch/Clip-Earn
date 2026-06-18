@@ -22,6 +22,7 @@ data class UserWallet(
     val woodenChests: Int = 3,
     val goldenChests: Int = 2,
     val luxuryChests: Int = 1,
+    val lastCheckInTime: Long = 0L,
     val claimedMin1: Boolean = false,
     val claimedMin2: Boolean = false
 )

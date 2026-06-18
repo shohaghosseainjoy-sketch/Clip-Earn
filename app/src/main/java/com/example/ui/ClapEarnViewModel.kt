@@ -84,6 +84,43 @@ class ClapEarnViewModel(application: Application) : AndroidViewModel(application
     private val _videoClapsMap = MutableStateFlow<Map<String, Int>>(emptyMap())
     val videoClapsMap: StateFlow<Map<String, Int>> = _videoClapsMap.asStateFlow()
 
+    fun claimDailyCheckIn() {
+        viewModelScope.launch {
+            val walletCurrent = repository.getWalletDirect()
+            val now = System.currentTimeMillis()
+            val lastCheckInDate = walletCurrent.lastCheckInTime / (24 * 60 * 60 * 1000)
+            val currentDate = now / (24 * 60 * 60 * 1000)
+
+            if (lastCheckInDate == currentDate) {
+                _gameMessage.value = "⚠️ You have already checked in today! Come back tomorrow."
+                delay(3000L)
+                _gameMessage.value = null
+                return@launch
+            }
+
+            var newStreak = walletCurrent.streakDays
+            if (currentDate - lastCheckInDate > 1 && walletCurrent.lastCheckInTime != 0L) {
+                newStreak = 1
+            } else {
+                newStreak += 1
+            }
+
+            val rewardCoins = 100L + (newStreak * 50L)
+
+            val updatedWallet = walletCurrent.copy(
+                lastCheckInTime = now,
+                streakDays = newStreak,
+                clapCoins = walletCurrent.clapCoins + rewardCoins
+            )
+
+            repository.updateWallet(updatedWallet)
+            
+            _gameMessage.value = "🎉 Checked in! Streak: $newStreak Days. Earned $rewardCoins ClapCoins!"
+            delay(4000L)
+            _gameMessage.value = null
+        }
+    }
+
     private var videoProgressJob: Job? = null
 
     init {
